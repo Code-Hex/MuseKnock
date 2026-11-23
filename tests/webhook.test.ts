@@ -11,7 +11,7 @@ test('a webhook is authenticated, validated and deduplicated', async (t) => {
       body,
       headers: { Authorization: 'Bearer ' + token, ...headers },
     })
-  const hook = '/hooks/default'
+  const hook = '/hooks/custom'
   const hookToken = 'HOOK_TOKEN-test'
   const body = '{"temperature":35, "sensor_id":9007199254740993}'
   const headers = {
@@ -24,6 +24,7 @@ test('a webhook is authenticated, validated and deduplicated', async (t) => {
   assert.equal((await post('/hooks/unknown', hookToken, body, headers)).status, 404)
   assert.equal((await post(hook, hookToken, '{', headers)).status, 400)
   assert.equal((await post(hook, hookToken, 'x'.repeat(33 * 1024))).status, 413)
+  assert.equal((await post('/hooks/default', hookToken, body, headers)).status, 404)
   const received = await post(hook, hookToken, body, headers)
   assert.equal(received.status, 202)
   const receipt = await received.json()
@@ -46,7 +47,7 @@ test('a webhook is authenticated, validated and deduplicated', async (t) => {
 test('incomplete device configuration rejects a webhook before queuing it', async (t) => {
   const worker = await startWorker(undefined, { MUSE_REFRESH_TOKEN: '' })
   t.after(() => worker.close())
-  const response = await fetch(new URL('/hooks/default', worker.url), {
+  const response = await fetch(new URL('/hooks/custom', worker.url), {
     method: 'POST',
     headers: { Authorization: 'Bearer HOOK_TOKEN-test' },
     body: 'event',
@@ -57,7 +58,7 @@ test('incomplete device configuration rejects a webhook before queuing it', asyn
 test('a deployment without an initial chat rejects new webhooks until a chat is registered', async (t) => {
   const worker = await startWorker(undefined, { MUSE_SESSION_ID: '' })
   t.after(() => worker.close())
-  const response = await fetch(new URL('/hooks/default', worker.url), {
+  const response = await fetch(new URL('/hooks/custom', worker.url), {
     method: 'POST',
     headers: { Authorization: 'Bearer HOOK_TOKEN-test' },
     body: 'event',

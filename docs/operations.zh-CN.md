@@ -40,7 +40,7 @@ Worker 使用标准设备 API `api.muse.ai` 和加密的 Link 网关 `hatch.meta
 
 ## 发送 Webhook
 
-向 `POST /hooks/default` 发送请求，用 `HOOK_TOKEN` 进行 Bearer 认证。
+向 `POST /hooks/custom` 发送请求，用 `HOOK_TOKEN` 进行 Bearer 认证。 在 MCP 中，来源名称仍为 `default`，已有的暂停和筛选规则继续生效。
 
 | 输入 | 处理方式 |
 | --- | --- |

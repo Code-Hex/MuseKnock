@@ -36,11 +36,13 @@ Cloudflare と GitHub のアカウント、認証済みの Muse 端末情報、�
 
 **4. 送信元サービスを接続します。** Slack、LINE、Twilio、Telegram、企業微信、GitHub、X には[サービス別の設定手順](#サービスを直接接続する)を使います。Bluesky と Discord の設定は [Bluesky を接続する](#bluesky-を接続する)と [Discord を接続する](#discord-を接続する)を参照してください。Bearer ヘッダーを指定できる送信元には、次の汎用 Webhook が使えます。
 
-送信元の Webhook 設定で、同じ Worker の `/hooks/default` に `POST` を指定します。ヘッダーを `Authorization: Bearer YOUR_HOOK_TOKEN`、`Content-Type: application/json` とし、例えば `{"message":"ビルドが完了しました"}` を送ると受付 ID が返ります。以降は Muse から配信状態の確認、通知元の一時停止、イベント種別の絞り込みができます。
+送信元の Webhook 設定で、同じ Worker の `/hooks/custom` に `POST` を指定します。ヘッダーを `Authorization: Bearer YOUR_HOOK_TOKEN`、`Content-Type: application/json` とし、例えば `{"message":"ビルドが完了しました"}` を送ると受付 ID が返ります。以降は Muse から配信状態の確認、通知元の一時停止、イベント種別の絞り込みができます。
+
+旧 URL の `/hooks/default` を使っている場合は、送信元の設定を `/hooks/custom` に更新してください。
 
 ## サービスを直接接続する
 
-Cloudflare で対象の Worker を開き、**Settings → Variables and Secrets** に利用するサービスの値を Secret として追加し、変更をデプロイします。登録する URL は、Worker の公開 HTTPS URL の末尾に下表のパスを付けたものです。各サービスは独自の方式で認証するため、`HOOK_TOKEN` は `/hooks/default` 用に保管します。
+Cloudflare で対象の Worker を開き、**Settings → Variables and Secrets** に利用するサービスの値を Secret として追加し、変更をデプロイします。登録する URL は、Worker の公開 HTTPS URL の末尾に下表のパスを付けたものです。各サービスは独自の方式で認証するため、`HOOK_TOKEN` は `/hooks/custom` 用に保管します。
 
 | サービス | Worker に登録する Secret | URL の登録と動作確認 |
 | --- | --- | --- |

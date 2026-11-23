@@ -36,11 +36,13 @@ Stop any executor or SDK daemon that uses this device identity and disable its a
 
 **4. Connect your event source.** For Slack, LINE, Twilio, Telegram, WeCom, GitHub, or X, follow [Connect a service directly](#connect-a-service-directly). For Bluesky or Discord, see [Connect Bluesky](#connect-bluesky) or [Connect Discord](#connect-discord). For a sender that supports a custom Bearer header, use the generic webhook below.
 
-In the sending service, configure `POST /hooks/default` on the same Worker, with `Authorization: Bearer YOUR_HOOK_TOKEN` and `Content-Type: application/json`. A body such as `{"message":"Build finished"}` returns a receipt ID. You can ask Muse to check that receipt, pause sources, and filter event types.
+In the sending service, configure `POST /hooks/custom` on the same Worker, with `Authorization: Bearer YOUR_HOOK_TOKEN` and `Content-Type: application/json`. A body such as `{"message":"Build finished"}` returns a receipt ID. You can ask Muse to check that receipt, pause sources, and filter event types.
+
+Upgrading from `/hooks/default`? Update the URL in your sender to `/hooks/custom`.
 
 ## Connect a service directly
 
-Open your Worker in Cloudflare, go to **Settings → Variables and Secrets**, add the secrets for the service you use, and deploy the changes. Append the path below to your public HTTPS Worker URL. Each endpoint uses the service's own authentication. Keep `HOOK_TOKEN` for `/hooks/default`.
+Open your Worker in Cloudflare, go to **Settings → Variables and Secrets**, add the secrets for the service you use, and deploy the changes. Append the path below to your public HTTPS Worker URL. Each endpoint uses the service's own authentication. Keep `HOOK_TOKEN` for `/hooks/custom`.
 
 | Service | Worker secrets | Register the URL and check delivery |
 | --- | --- | --- |

@@ -40,7 +40,7 @@ Worker は標準の端末 API `api.muse.ai` と暗号化された Link ゲート
 
 ## Webhook の送信仕様
 
-標準の送信先は `POST /hooks/default` です。`HOOK_TOKEN` で Bearer 認証します。
+標準の送信先は `POST /hooks/custom` です。`HOOK_TOKEN` で Bearer 認証します。 MCP 上の送信元名は `default` です。既存の一時停止設定やフィルターも引き継がれます。
 
 | 入力 | 処理 |
 | --- | --- |

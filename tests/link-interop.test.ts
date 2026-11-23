@@ -112,7 +112,7 @@ test(
       chats: [{ name: 'My existing chat', sessionId: 'same-chat' }],
     })
     const post = () =>
-      fetch(new URL('/hooks/default', worker.url), {
+      fetch(new URL('/hooks/custom', worker.url), {
         method: 'POST',
         headers: {
           Authorization: 'Bearer HOOK_TOKEN-test',

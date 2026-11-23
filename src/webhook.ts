@@ -46,12 +46,13 @@ async function decodeText(request: Request): Promise<string> {
 
 export function registerWebhook(
   app: Hono<WorkerEnv>,
-  source: string,
+  route: string | { slug: string; source: string },
   middleware: [MiddlewareHandler<WorkerEnv>, ...MiddlewareHandler<WorkerEnv>[]],
   decode: (request: Request) => Promise<string> = decodeText,
 ) {
-  if (!identifier.test(source)) throw new Error('Invalid webhook source name')
-  app.post('/hooks/' + source, bodyLimit({ maxSize: 32 * 1024 }), ...middleware, async (c) => {
+  const { slug, source } = typeof route === 'string' ? { slug: route, source: route } : route
+  if (!identifier.test(slug) || !identifier.test(source)) throw new Error('Invalid webhook name')
+  app.post('/hooks/' + slug, bodyLimit({ maxSize: 32 * 1024 }), ...middleware, async (c) => {
     if (!museDevice(c.env)) return c.text('Configure the Muse device first', 503)
     const type = c.req.header('X-Event-Type') ?? 'notification'
     const key = c.req.header('Idempotency-Key') ?? crypto.randomUUID()

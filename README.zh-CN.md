@@ -36,11 +36,13 @@ MuseKnock 通过 Cloudflare Workers 把 Webhook 通知发送到已有的 Muse �
 
 **4. 连接事件来源。** 如需接入 Slack、LINE、Twilio、Telegram、企业微信、GitHub 或 X，请参阅[直接连接服务](#直接连接服务)。Bluesky 和 Discord 的设置见[连接 Bluesky](#连接-bluesky)和[连接 Discord](#连接-discord)。支持自定义 Bearer 请求头的服务可以使用下面的通用 Webhook。
 
-在发送服务的 Webhook 设置中，将请求设为发往同一 Worker 的 `/hooks/default` 的 `POST`，添加 `Authorization: Bearer YOUR_HOOK_TOKEN` 和 `Content-Type: application/json`。发送 `{"message":"构建完成"}` 等正文后会收到回执 ID。之后可以在 Muse 中查看投递状态、暂停来源或筛选事件类型。
+在发送服务的 Webhook 设置中，将请求设为发往同一 Worker 的 `/hooks/custom` 的 `POST`，添加 `Authorization: Bearer YOUR_HOOK_TOKEN` 和 `Content-Type: application/json`。发送 `{"message":"构建完成"}` 等正文后会收到回执 ID。之后可以在 Muse 中查看投递状态、暂停来源或筛选事件类型。
+
+如果发送端之前使用 `/hooks/default`，请将 URL 更新为 `/hooks/custom`。
 
 ## 直接连接服务
 
-在 Cloudflare 中打开 Worker，进入 **Settings → Variables and Secrets**，按需将下表中的值添加为 Secret 并部署更改。将相应路径附加到 Worker 的公开 HTTPS 地址，得到要注册的完整 URL。各服务使用自身的认证机制，`HOOK_TOKEN` 仅供 `/hooks/default` 使用。
+在 Cloudflare 中打开 Worker，进入 **Settings → Variables and Secrets**，按需将下表中的值添加为 Secret 并部署更改。将相应路径附加到 Worker 的公开 HTTPS 地址，得到要注册的完整 URL。各服务使用自身的认证机制，`HOOK_TOKEN` 仅供 `/hooks/custom` 使用。
 
 | 服务 | Worker Secret | 注册 URL 并验证投递 |
 | --- | --- | --- |

@@ -12,7 +12,7 @@ test('a webhook wakes the Worker and starts device authorization without a bridg
   })
   t.after(() => worker.close())
   const post = () =>
-    fetch(new URL('/hooks/default', worker.url), {
+    fetch(new URL('/hooks/custom', worker.url), {
       method: 'POST',
       headers: { Authorization: 'Bearer HOOK_TOKEN-test', 'Idempotency-Key': 'first-knock' },
       body: 'A test notification',

@@ -76,7 +76,7 @@ test('MCP readers inspect delivery rules; only administrators can change them', 
     true,
   )
 
-  const hook = await fetch(new URL('/hooks/default', worker.url), {
+  const hook = await fetch(new URL('/hooks/custom', worker.url), {
     method: 'POST',
     headers: { Authorization: 'Bearer HOOK_TOKEN-test', 'X-Event-Type': 'opened' },
     body: 'sensitive event body',
@@ -121,7 +121,7 @@ test('an admin registers and switches webhook destinations without a deployment 
   })
   const select = (name: string) => ({ name: 'set_active_side_chat', arguments: { name } })
   const post = () =>
-    fetch(new URL('/hooks/default', worker.url), {
+    fetch(new URL('/hooks/custom', worker.url), {
       method: 'POST',
       headers: { Authorization: 'Bearer HOOK_TOKEN-test' },
       body: 'browser setup complete',
@@ -294,7 +294,7 @@ test('credential storage must be available before accepting deliveries or refres
       arguments: { requestId: crypto.randomUUID() },
     })
     assert.equal(test.isError, true)
-    const response = await fetch(new URL('/hooks/default', worker.url), {
+    const response = await fetch(new URL('/hooks/custom', worker.url), {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + 'A'.repeat(64) },
       body: 'test',

@@ -35,7 +35,7 @@ registerProvider(app, 'twilio', twilio)
 registerProvider(app, 'wecom', wecom, ['GET', 'POST'])
 registerProvider(app, 'x', x, ['GET', 'POST'])
 
-registerWebhook(app, 'default', [
+registerWebhook(app, { slug: 'custom', source: 'default' }, [
   checkTokenRoles,
   bearerAuth({ verifyToken: (token, c) => matches(token, c.env.HOOK_TOKEN) }),
 ])

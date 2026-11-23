@@ -40,7 +40,7 @@ The Worker uses the standard device API at `api.muse.ai` and the encrypted Link 
 
 ## Send a webhook
 
-Send `POST /hooks/default` with `HOOK_TOKEN` as the Bearer token.
+Send `POST /hooks/custom` with `HOOK_TOKEN` as the Bearer token. Its source name in MCP is `default`, so existing pause and filter rules still apply.
 
 | Input | Behavior |
 | --- | --- |
