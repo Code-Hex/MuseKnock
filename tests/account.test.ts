@@ -3,7 +3,7 @@ import { once } from 'node:events'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { test, type TestContext } from 'node:test'
 import type { MuseDevice } from '../src/muse-device.ts'
-import { getMuseVms } from '../src/muse-account.ts'
+import { getMuseVms, refreshMuseDevice } from '../src/muse-account.ts'
 
 const device = {
   nodeId: 'homelink-abc123',
@@ -61,8 +61,10 @@ test('rotates the device secret before VM lookup and selects the default leased 
   const vms = await getMuseVms(
     device,
     undefined,
-    async (next) => {
+    async () => {
+      const next = await refreshMuseDevice(device, http)
       saved = next
+      return next.access
     },
     http,
   )
@@ -106,8 +108,10 @@ test('refreshes a rejected cached access token once, with the latest refresh sec
     getMuseVms(
       current,
       undefined,
-      async (next) => {
+      async () => {
+        const next = await refreshMuseDevice(current, http)
         persisted.push(next)
+        return next.access
       },
       http,
     ),
@@ -129,6 +133,7 @@ test('keeps credentials out of errors and stops before lookup if persisting a ro
       device,
       undefined,
       async () => {
+        await refreshMuseDevice(device, http)
         throw new Error('storage unavailable')
       },
       http,
@@ -137,7 +142,7 @@ test('keeps credentials out of errors and stops before lookup if persisting a ro
   )
   assert.deepEqual(methods, ['POST'])
   await assert.rejects(
-    getMuseVms({ ...device, nodeId: 'other\r\nhost' }, undefined, async () => {}, http),
+    getMuseVms({ ...device, nodeId: 'other\r\nhost' }, undefined, async () => assert.fail(), http),
     /device/,
   )
   assert.deepEqual(methods, ['POST'])
@@ -154,8 +159,8 @@ test('an expired access token rotates before discovery, and a refused redirect n
       res.end(JSON.stringify({ access_token: 'unsafe', refresh_token: 'unsafe' }))
     }
   })
-  await assert.rejects(
-    getMuseVms({ ...current, access: { ...current.access, savedAt: 0 } }, undefined, async () => assert.fail(), http),
-  )
+  const expired = { ...current, access: { ...current.access, savedAt: 0 } }
+  const rotate = async () => (await refreshMuseDevice(expired, http)).access
+  await assert.rejects(getMuseVms(expired, undefined, rotate, http))
   assert.deepEqual(paths, ['/device_token/refresh'])
 })

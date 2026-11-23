@@ -124,3 +124,46 @@ test('Discord respects retry_after without moving the message cursor or sending 
   )
   assert.deepEqual(delayed, limited)
 })
+
+test('Discord delivers bounded forwarded text and attachment metadata under the forwarding message ID', async () => {
+  const forward = {
+    ...message(ids[1], ''),
+    message_reference: { type: 1, message_id: ids[0], channel_id: channel },
+    message_snapshots: [{ message: {
+      content: '🌱'.repeat(2010),
+      attachments: Array.from({ length: 12 }, () => ({
+        filename: 'report.png', size: 3, content_type: 'image/png', url: 'https://example.test/private',
+      })),
+    } }],
+  }
+  const state = await pollDiscord(channel, token, { channelId: channel, lastId: ids[0] }, async events => {
+    assert.equal(events.length, 1)
+    assert.equal(events[0].key, ids[1])
+    const text = JSON.parse(events[0].text)
+    assert.equal(text.forwarded.content, '🌱'.repeat(2000))
+    assert.deepEqual(text.forwarded.attachments, Array(10).fill({
+      filename: 'report.png', size: 3, content_type: 'image/png',
+    }))
+    assert.deepEqual(text.author, forward.author)
+    assert.equal(text.content, '')
+    return 'accepted'
+  }, history([forward]))
+  assert.equal(state.lastId, ids[1])
+})
+
+test('Discord keeps both portions of a large forward within the notification byte limit', async () => {
+  const escaped = String.fromCharCode(2)
+  const body = {
+    content: escaped.repeat(2000),
+    attachments: Array(10).fill({ filename: escaped.repeat(150), size: 7, content_type: escaped.repeat(128) }),
+  }
+  await pollDiscord(channel, token, { channelId: channel, lastId: ids[0] }, async ([event]) => {
+    assert.ok(Buffer.byteLength(event.text) <= 32 * 1024)
+    const text = JSON.parse(event.text)
+    assert.ok(text.content.length && text.forwarded.content.length)
+    assert.ok(text.attachments.length && text.forwarded.attachments.length)
+    return 'accepted'
+  }, async () => Response.json([{
+    ...message(ids[1]), ...body, message_reference: { type: 1 }, message_snapshots: [{ message: body }],
+  }]))
+})

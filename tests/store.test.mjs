@@ -610,3 +610,22 @@ test('a retraction suppresses pending, retried and late messages from its source
   const other = await call('enqueue', message('unrelated', '1', 'elsewhere'))
   assert.equal((await call('claim')).id, other.id)
 })
+
+test('grouped provider callbacks share one delivery attempt through restart and expire with its receipt', async () => {
+  const call = await registeredInbox('grouped-callbacks')
+  await call('reopen', 'device-a', '{"maxAttempts":3,"maxAttemptsPerSource":3}')
+  const original = { ...event('first', 'slack', 'message'), coalesceKey: 'post-1' }
+  const mention = { ...event('second', 'slack', 'app_mention'), coalesceKey: 'post-1' }
+  const receipt = await call('enqueue', original)
+  const claim = await call('claim')
+  await call('finish', receipt.id, claim.attempt, 'sent')
+  await call('reopen', 'device-a', '{"maxAttempts":3,"maxAttemptsPerSource":3}')
+  assert.deepEqual(await call('enqueue', mention), { id: receipt.id, state: 'sent', duplicate: true })
+  assert.equal(await call('claim'), null)
+  assert.equal((await call('breakerStatus')).remaining, 2)
+  await call('age', 8 * 24 * 60 * 60_000)
+  const next = await call('enqueue', mention)
+  assert.equal(next.state, 'queued')
+  assert.equal(next.duplicate, false)
+  assert.notEqual(next.id, receipt.id)
+})

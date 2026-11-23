@@ -26,33 +26,39 @@ flowchart LR
 
 ## クイックスタート
 
-Cloudflare と GitHub のアカウント、認証済みの Muse 端末情報、ガジェットが既存のチャットで使っているセッション ID を用意します。SDK トークンは自分の Muse アカウントでの個人・非商用利用が対象です。[初回の端末認証](docs/operations.ja.md#初回の端末認証)・[SDK トークンの利用条件](https://gadgets.muse.ai/sdk-terms)
+Cloudflare と GitHub のアカウント、既存の Muse サイドチャットのセッション ID、Muse Gadget SDK トークン（`MUSE_SDK_TOKEN`）を用意します。トークンは個人・非商用利用向けです。[SDK トークンを発行する](https://gadgets.muse.ai/settings/sdk-tokens) · [利用条件](https://gadgets.muse.ai/sdk-terms)
 
-**1. Cloudflare からデプロイします。** **Deploy to Cloudflare** を押し、Worker 名を選んで次の5項目を入力します。管理用トークンと暗号鍵はパスワードマネージャーで別々に生成してください。 [Cloudflare のデプロイボタンの仕様](https://developers.cloudflare.com/workers/platform/deploy-buttons/#worker-environment-variables-and-secrets)
+**1. Cloudflare にデプロイします。** Worker 名を選び、次の2つを別々に生成して入力します。両方をパスワードマネージャーに保管し、デプロイ先の HTTPS URL を控えます。
 
 | シークレット | 設定する値 | 必要な期間 |
 | --- | --- | --- |
 | `MCP_ADMIN_TOKEN` | Muse の管理用コネクタで使う、十分に長いランダムなトークン | 常時 |
 | `CREDENTIAL_ENCRYPTION_KEY` | 保存する認証情報を暗号化する32バイトの専用鍵。パスワードマネージャーで16進数（0〜9、a〜f）のランダムな64文字を生成し、控えを安全に保管します。 | 常時 |
-| `MUSE_NODE_ID` | 公式の `pairing.json` なら `node_id`、コミュニティ版の `state.json` なら `device.device_id` | 初回 |
-| `MUSE_REFRESH_TOKEN` | 公式なら `refresh_token`、コミュニティ版なら `device.refresh_token` | 初回 |
-| `MUSE_SDK_TOKEN` | 公式ならペアリングに使った SDK トークン、コミュニティ版なら `sdk_token` | 初回 |
-
-以前の開発版を試した場合は、新しい Worker 名で空のストレージを作り、その Worker 専用の有効な端末認証情報を設定してください。宛先を登録し直し、コネクタと通知元を新しい URL に向けます。開発版のキュー・ルール・認証情報の自動移行はありません。
-
-引き渡し後は Worker が端末の認証情報を更新します。同じ端末 ID を使う executor や SDK デーモンが稼働中なら、事前に停止して自動起動を解除します。Cloudflare に転記する端末情報は表の3項目だけです。元のファイルとアカウントの認証情報は手元で保管してください。Worker をデプロイしたら、表示された HTTPS URL をコピーします。
 
 **2. Muse にコネクタを追加します。** Muse の **Settings → Connectors** でカスタムコネクタを1つ追加します。デプロイ先の URL の末尾に `/mcp` を付け、認証方式に Bearer を選び、トークン欄に `MCP_ADMIN_TOKEN` を入力します。[Muse コネクタの設定手順](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
-**3. Muse に投稿先の登録とテストを頼みます。** 次の順に依頼してください。
+**3. Muse に「MuseKnock のペアリングを開始して」と頼みます。** `configured` なら手順4に進みます。`rejected` なら[ペアリングを更新](docs/operations.ja.md#端末認証を更新する)します。`awaiting_authorization` なら、スマホの Muse にログインし、Bluetooth 対応の Mac でこのリポジトリを開きます。Node.js 22.12 以降と [uv](https://docs.astral.sh/uv/getting-started/installation/) を用意して実行します。
+
+Mac を使うのは初回の認可時だけです。スマホからの認可が完了すると Bluetooth の広告は終了し、以降の通知は Worker がインターネット経由の Muse Link で届けます。
+
+```sh
+npm ci
+npm run authorize -- --bluetooth
+```
+
+Mac のターミナルに Worker URL、管理用トークン、Gadget SDK トークンを入力します。ペアリングが完了するまでターミナルを開いておきます。
+
+1. Muse で使う iPhone に、特性への書き込みができる Bluetooth LE ツールを用意します。[nRF Connect](https://github.com/nordicsemi/IOS-nRF-Connect) などで、Mac に表示された `MuseGadget…` と同じ名前のデバイスに接続します。
+2. ターミナルに表示されたサービスと確認用の特性を開きます。**Write with response** を選び、Mac に表示された16桁の16進確認コードを書き込みます。Mac に **Phone verified** と表示されたら、Bluetooth ツールを切断します。
+3. 同じ iPhone の Muse で **設定 → デバイス → コミュニティデバイスを許可**（一部のバージョンでは **Developer mode**）を有効にし、**＋** を開きます。種類を聞かれたら **Muse Gadget** を選び、同じデバイス名に接続します。Wi-Fi の選択画面では **Use current connection** を選びます。Worker への保存が完了したら Mac の電源を切れます。[認証の詳細](docs/operations.ja.md#初回の端末認証)
+
+**4. Muse に投稿先の登録とテストを頼みます。** 次の順に依頼してください。
 
 1. 「MuseKnock の設定を確認して」。`get_setup_status` は Worker 内の設定を確認します。実際に届くかはテスト投稿で確かめます。
-2. 「既存のセッション `既存のセッションID` を『ビルド通知』として登録し、通知先にして」。ID にはガジェットの `--session-id` と同じ値を使います。`register_side_chat` が登録する名前は MuseKnock 内のものです。MuseKnock は登録・切替の前に、選択した Muse VM にそのセッションが存在することを確認します。[Gadget SDK のサイドチャット](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
+2. 「既存のセッション `既存のセッションID` を『ビルド通知』として登録し、通知先にして」。既存のサイドチャットのセッション ID を使います。`register_side_chat` が登録する名前は MuseKnock 内のものです。MuseKnock は登録・切替の前に、選択した Muse VM にそのセッションが存在することを確認します。[Gadget SDK のサイドチャット](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. 「テスト通知を1件送り、配信状態を確認して」。Muse は新しい UUID を `requestId` として `send_test_notification` を呼び、返った受付 ID を `get_delivery_status` に渡します。`sent` になったら選んだチャットを開きます。同じテストを再試行するときは同じリクエスト ID を使います。
 
-テストの受付状態が `sent` になったら、Cloudflare で初回用の Muse シークレット3項目をまとめて削除し、変更をデプロイできます。`MCP_ADMIN_TOKEN` と元の `CREDENTIAL_ENCRYPTION_KEY` は保持してください。Worker は保存したペアリングと最新の更新トークンを復号して使います。再度 `get_setup_status` を呼び、`ready` が true であることを確認します。
-
-**4. 送信元サービスを接続します。** Slack、LINE、Twilio、Telegram、企業微信、GitHub、X には[サービス別の設定手順](#サービスを直接接続する)を使います。Bluesky と Discord の設定は [Bluesky を接続する](#bluesky-を接続する)と [Discord を接続する](#discord-を接続する)を参照してください。Bearer ヘッダーを指定できる送信元には、次の汎用 Webhook が使えます。
+**5. 送信元サービスを接続します。** Slack、LINE、Twilio、Telegram、企業微信、GitHub、X には[サービス別の設定手順](#サービスを直接接続する)を使います。Bluesky と Discord の設定は [Bluesky を接続する](#bluesky-を接続する)と [Discord を接続する](#discord-を接続する)を参照してください。Bearer ヘッダーを指定できる送信元には、次の汎用 Webhook が使えます。
 
 汎用 Webhook を使う場合は、別途ランダムな `HOOK_TOKEN` を Worker の Secret に追加してください。閲覧専用の MCP コネクタを使う場合は `MCP_TOKEN` も追加します。用途ごとに別の値を使います。
 
@@ -113,7 +119,7 @@ Muse の投稿先を選んだら、Worker の **Settings → Variables and Secre
 
 ## Discord を接続する
 
-Worker が Discord サーバーのテキストチャンネルを 1 つ、5 分ごとに確認します。初回はその時点の最新メッセージを記録し、次回から新着を毎回最大 10 件、古い順に読み取ります。通常のメッセージと返信について、投稿者、本文の先頭 2,000 文字、添付ファイルの名前・サイズ・種類が Muse に届きます。
+Worker が Discord サーバーのテキストチャンネルを 1 つ、5 分ごとに確認します。初回はその時点の最新メッセージを記録し、次回から新着を毎回最大 10 件、古い順に読み取ります。通常のメッセージと返信について、投稿者、本文の先頭 2,000 文字、添付ファイルの名前・サイズ・種類が Muse に届きます。 転送メッセージには転送元の本文と添付ファイルの情報も含まれます。
 
 1. Discord Developer Portal でアプリを作成し、**Bot** で **Message Content Intent** を有効にします。認証済みアプリにはこの権限の承認が必要です。Bot トークンをコピーし、Worker の Secret `DISCORD_BOT_TOKEN` に保存します。[メッセージ本文へのアクセス](https://docs.discord.com/developers/events/gateway#message-content-intent)
 2. **Installation** の **Guild Install** に `bot` スコープを設定し、インストールリンクから Bot をサーバーに追加します。対象チャンネルで Bot に **チャンネルを見る** と **メッセージ履歴を読む** 権限を付与します。そのチャンネルに投稿できる人の発言が、選択した Muse チャットに届きます。[Discord アプリのインストール](https://docs.discord.com/developers/resources/application#installation-context)・[チャンネル履歴の権限](https://docs.discord.com/developers/resources/message#get-channel-messages)

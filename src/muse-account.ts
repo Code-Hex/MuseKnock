@@ -32,10 +32,11 @@ function accountRequest(request: AccountRequest, path: string, options: RequestI
   })
 }
 
-async function rotate(
+export class MuseCredentialRejected extends Error {}
+
+export async function refreshMuseDevice(
   config: MuseDevice,
-  persist: (next: MuseDevice) => Promise<void>,
-  request: AccountRequest,
+  request: AccountRequest = fetch,
 ) {
   const raw = config.refreshToken.replace(/^hatch_refresh:/, '')
   const response = await accountRequest(request, '/device_token/refresh', {
@@ -43,6 +44,8 @@ async function rotate(
     headers: { Authorization: 'Bearer hatch_refresh:' + raw, 'Content-Type': 'application/json' },
     body: JSON.stringify({ device_id: config.nodeId, sdk_token: config.sdkToken }),
   })
+  if (response.status === 401 || response.status === 403)
+    throw new MuseCredentialRejected('Muse rejected the device credentials')
   if (!response.ok) throw new Error('Muse device refresh failed (HTTP ' + response.status + ')')
 
   const data: unknown = await response.json().catch(() => null)
@@ -50,13 +53,11 @@ async function rotate(
     data && typeof data === 'object' && 'payload' in data ? data.payload : data,
   )
   if (!tokens.success) throw new Error('Invalid Muse device refresh response')
-  const next = {
+  return {
     ...config,
     access: { token: tokens.data.access_token, savedAt: Date.now() },
     refreshToken: tokens.data.refresh_token,
   }
-  await persist(next)
-  return next
 }
 
 function fetchLeases(accessToken: string, request: AccountRequest) {
@@ -69,18 +70,17 @@ function fetchLeases(accessToken: string, request: AccountRequest) {
 export async function getMuseVms(
   config: MuseDevice,
   vmId: string | undefined,
-  persist: (next: MuseDevice) => Promise<void>,
+  rotateAccess: () => Promise<NonNullable<MuseDevice['access']>>,
   request: AccountRequest = fetch,
 ) {
   if (!museDeviceSchema.safeParse(config).success) throw new Error('Invalid Muse device configuration')
   const age = config.access ? Date.now() - config.access.savedAt : -1
   const cached = age >= 0 && age < refreshAfterMs ? config.access : undefined
-  const access = cached ?? (await rotate(config, persist, request)).access
+  const access = cached ?? await rotateAccess()
   let response = await fetchLeases(access.token, request)
   if (response.status === 401 && cached) {
     await response.body?.cancel()
-    const next = await rotate(config, persist, request)
-    response = await fetchLeases(next.access.token, request)
+    response = await fetchLeases((await rotateAccess()).token, request)
   }
   if (!response.ok) throw new Error('Muse VM lookup failed (HTTP ' + response.status + ')')
   const result = listing.safeParse(await response.json().catch(() => null))

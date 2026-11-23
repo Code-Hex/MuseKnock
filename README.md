@@ -26,33 +26,39 @@ flowchart LR
 
 ## Quick start
 
-Have your Cloudflare and GitHub accounts, an authorized Muse device, and the exact session ID your gadget uses for the existing chat ready. The SDK token is for personal, non-commercial use with your own Muse account. [One-time device authorization](docs/operations.md#authorize-a-device) · [SDK token terms](https://gadgets.muse.ai/sdk-terms)
+Prepare your Cloudflare and GitHub accounts, an existing Muse side chat and its session ID, and your Muse Gadget SDK token (`MUSE_SDK_TOKEN`). The token is for personal, non-commercial use. [Issue an SDK token](https://gadgets.muse.ai/settings/sdk-tokens) · [SDK token terms](https://gadgets.muse.ai/sdk-terms)
 
-**1. Deploy from Cloudflare.** Click **Deploy to Cloudflare**, choose a Worker name and enter these five secrets. Generate the admin token and encryption key separately in your password manager. [Cloudflare deploy buttons](https://developers.cloudflare.com/workers/platform/deploy-buttons/#worker-environment-variables-and-secrets)
+**1. Deploy to Cloudflare.** Choose a Worker name and supply these two secrets. Keep both in your password manager, then copy the deployed Worker’s HTTPS URL.
 
 | Worker secret | Value | When needed |
 | --- | --- | --- |
 | `MCP_ADMIN_TOKEN` | A long random token for the admin connector in Muse | Keep |
 | `CREDENTIAL_ENCRYPTION_KEY` | A separate 32-byte key for encrypting stored credentials. In your password manager, generate 64 random hexadecimal characters (0–9, a–f) and keep a private backup. | Keep |
-| `MUSE_NODE_ID` | Official `pairing.json`: `node_id`. Community `state.json`: `device.device_id`. | Initial setup |
-| `MUSE_REFRESH_TOKEN` | Official: `refresh_token`. Community: `device.refresh_token`. | Initial setup |
-| `MUSE_SDK_TOKEN` | The SDK token used for the official pairing, or `sdk_token` in community state. | Initial setup |
-
-If you tested an earlier prerelease, choose a new Worker name for fresh storage. Use current device credentials dedicated to the new Worker. Register the destination again and point your connectors and event sources at the new URL. Prerelease queues, rules and credentials are not migrated.
-
-Stop any executor or SDK daemon that uses this device identity and disable its automatic restart before handing it over. The Worker will rotate the device credentials. Copy only the three named device values into Cloudflare. Keep the source file and account credentials private. Deploy the Worker and copy its HTTPS URL.
 
 **2. Connect Muse.** In Muse **Settings → Connectors**, add one custom connector. Append `/mcp` to the deployed Worker URL, choose Bearer authentication, and enter `MCP_ADMIN_TOKEN` in the token field. [Muse connector guide](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
-**3. Register and test the chat from Muse.** You can ask the connector to do each step in plain language.
+**3. Start pairing from Muse.** Ask “Start MuseKnock pairing.” If the Worker reports `configured`, continue to step 4. For `rejected`, [renew the pairing](docs/operations.md#renew-device-authorization). For `awaiting_authorization`, open this repository on a Bluetooth-enabled Mac with Node.js 22.12 or later and [uv](https://docs.astral.sh/uv/getting-started/installation/). Sign in to Muse on your phone and run:
+
+The Mac is needed only for initial pairing. After the phone authorizes the Worker, Bluetooth discovery ends. Subsequent notifications use Muse Link over the internet.
+
+```sh
+npm ci
+npm run authorize -- --bluetooth
+```
+
+Enter the Worker URL, admin token and Gadget SDK token in the Mac terminal. Keep it open until it confirms the pairing.
+
+1. On the iPhone you use for Muse, open a Bluetooth LE tool that can write characteristics, such as [nRF Connect](https://github.com/nordicsemi/IOS-nRF-Connect). Connect to the exact `MuseGadget…` name printed on the Mac.
+2. Open the service and verification characteristic shown in the terminal. Choose **Write with response** and enter the Mac’s 16-digit hexadecimal verification code. When the Mac displays **Phone verified**, disconnect the Bluetooth tool.
+3. On the same iPhone, open Muse **Settings → Devices**, enable **Allow community devices** (**Developer mode** on some versions), and tap **+**. Select **Muse Gadget** if prompted, then select the same gadget name. If Muse asks about Wi-Fi, choose **Use current connection**. Once the Worker confirms it saved the pairing, you can turn off the Mac. [Authorization details](docs/operations.md#authorize-a-device)
+
+**4. Register and test the chat from Muse.** You can ask the connector to do each step in plain language.
 
 1. “Check my MuseKnock configuration.” `get_setup_status` checks local settings. The test post below checks delivery.
-2. “Register the existing session `YOUR-EXISTING-SESSION-ID` as `builds` and select it for notifications.” Use the exact `--session-id` from your gadget. `register_side_chat` saves the destination. MuseKnock can list its registered names. MuseKnock checks that the session exists on the selected Muse VM before saving or switching the destination. [Gadget SDK side chats](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
+2. “Register the existing session `YOUR-EXISTING-SESSION-ID` as `builds` and select it for notifications.” Use the ID of the existing side chat. `register_side_chat` saves the destination. MuseKnock can list its registered names. MuseKnock checks that the session exists on the selected Muse VM before saving or switching the destination. [Gadget SDK side chats](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “Send one test notification and check its receipt.” Muse calls `send_test_notification` with a fresh UUID as `requestId`, then `get_delivery_status` with the returned receipt ID. Look in the selected chat when the status is `sent`. Reuse the same request ID when retrying the same test.
 
-After the test receipt shows `sent`, you can delete the three initial Muse secrets together in Cloudflare and deploy the changes. Keep `MCP_ADMIN_TOKEN` and the original `CREDENTIAL_ENCRYPTION_KEY`. The Worker reloads the pairing and its latest refresh token from encrypted storage. Call `get_setup_status` again and check that `ready` is true.
-
-**4. Connect your event source.** For Slack, LINE, Twilio, Telegram, WeCom, GitHub, or X, follow [Connect a service directly](#connect-a-service-directly). For Bluesky or Discord, see [Connect Bluesky](#connect-bluesky) or [Connect Discord](#connect-discord). For a sender that supports a custom Bearer header, use the generic webhook below.
+**5. Connect your event source.** For Slack, LINE, Twilio, Telegram, WeCom, GitHub, or X, follow [Connect a service directly](#connect-a-service-directly). For Bluesky or Discord, see [Connect Bluesky](#connect-bluesky) or [Connect Discord](#connect-discord). For a sender that supports a custom Bearer header, use the generic webhook below.
 
 For the custom webhook, first add a separate random Worker secret named `HOOK_TOKEN`. A read-only MCP connector uses another optional secret, `MCP_TOKEN`. Use a different token for each role.
 
@@ -113,7 +119,7 @@ The first successful poll for each account establishes where to start. To test d
 
 ## Connect Discord
 
-The Worker checks one Discord server text channel every five minutes. It starts at the latest message on the first successful check. Subsequent checks read up to ten new messages per run in chronological order. Normal messages and replies appear in Muse with their author, the first 2,000 characters of text, and attachment names, sizes and media types.
+The Worker checks one Discord server text channel every five minutes. It starts at the latest message on the first successful check. Subsequent checks read up to ten new messages per run in chronological order. Normal messages and replies appear in Muse with their author, the first 2,000 characters of text, and attachment names, sizes and media types. For forwarded messages, the notification also includes the original text and attachment metadata.
 
 1. In the Discord Developer Portal, create an application. Open **Bot**, enable **Message Content Intent**, and copy the bot token. Verified apps need approval for this intent. Save the token to the Worker as the secret `DISCORD_BOT_TOKEN`. [Discord message content access](https://docs.discord.com/developers/events/gateway#message-content-intent)
 2. Under **Installation**, configure **Guild Install** with the `bot` scope. Open the installation link to add the bot to your server. In the chosen channel’s permissions, grant the bot **View Channel** and **Read Message History**. Everyone whose messages the bot reads there can trigger a notification in the selected Muse chat. [Discord installation guide](https://docs.discord.com/developers/resources/application#installation-context) · [Channel history permissions](https://docs.discord.com/developers/resources/message#get-channel-messages)

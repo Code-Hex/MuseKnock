@@ -24,6 +24,7 @@ test('MCP readers inspect delivery rules; only administrators can change them', 
     'list_sources',
   ])
   assert.deepEqual((await admin.listTools()).tools.map((tool) => tool.name).sort(), [
+    'begin_muse_pairing',
     'get_delivery_breaker',
     'get_delivery_status',
     'get_setup_status',

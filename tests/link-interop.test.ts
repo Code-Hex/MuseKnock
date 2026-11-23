@@ -64,6 +64,8 @@ test(
       ['lookup-busy', 'not_sent'],
       ['lookup-reset', 'not_sent'],
       ['reject-registration', 'not_sent'],
+      ['post-rate-limited', 'not_sent'],
+      ['post-unavailable', 'unknown'],
       ['lost-ack', 'unknown'],
       ['post-reset', 'unknown'],
       ['malformed-ack', 'unknown'],

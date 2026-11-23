@@ -4,18 +4,23 @@
 
 ## 首次授权设备
 
-请为此 Worker 准备一个专用设备身份。前往 [Muse Gadgets](https://gadgets.muse.ai/) 的 **Account → SDK tokens** 获取自己的 SDK 令牌。
+使用 Mac 和手机配对时，请在 Mac 上运行 `npm run authorize -- --bluetooth`。uv 会安装 macOS 蓝牙绑定和固定版本的 Muse SDK 配对协议实现。手机上的 Muse 应用为此 Worker 授权新设备。更新同一 Worker 的配对时，添加 `--replace`。如果 Muse 允许你的账户使用验证码登录，也可使用下面的验证码方式。 手机验证步骤见[快速开始](../README.zh-CN.md#快速开始)。
 
-- **官方配对。** 在 Muse 应用中为专用设备配对，然后停止 SDK 守护进程。从 `pairing.json` 获取当前的 `node_id` 和 `refresh_token`，并准备配对时使用的 SDK 令牌。Linux SDK 通常将该文件保存在 `/var/lib/musegadget/`。[官方配对指南](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md#install)
-- **通过浏览器使用社区工具登录。** 如果没有配对过的硬件，且愿意使用第三方工具登录，可以在自己的 GitHub Codespace 中打开 Muse Desktop Bridge 仓库。在浏览器的终端中运行 `git checkout 3b6d0e0665d40d5537b21b701c18327e288741d9`，再运行 `python3 muse-auth/muse_auth.py setup`。按提示使用自己的账户登录，完成一次性验证码或双重认证，并提供本人的 SDK 令牌。遇到账户验证时，可能仍需在 Muse 应用中操作。尚未使用真实账户在 Codespaces 中验证该登录流程。[社区登录说明](https://github.com/chaitanyarahalkar/muse-desktop-bridge/blob/3b6d0e0665d40d5537b21b701c18327e288741d9/muse-auth/README.md) · [在 Codespace 中打开 Muse Desktop Bridge](https://codespaces.new/chaitanyarahalkar/muse-desktop-bridge) · [GitHub Codespaces 说明](https://docs.github.com/en/codespaces/developing-in-a-codespace/creating-a-codespace-for-a-repository)
+如果已有供此 Worker 使用的有效配对，可在 Cloudflare 的 **Settings → Variables and Secrets** 中将同一配对的 `MUSE_NODE_ID`、`MUSE_SDK_TOKEN` 和 `MUSE_REFRESH_TOKEN` 一起设为密钥并部署。通过管理 MCP 调用 `begin_muse_pairing`，返回 `configured` 后即可注册侧边对话。以下命令用于创建新配对。
 
-使用社区登录时，在你自己的私有 Codespace 编辑器中打开 `muse-auth/.state/state.json`，只把 `sdk_token`、`device.device_id` 和 `device.refresh_token` 复制到 Cloudflare 部署表单中对应的密钥栏。将原始文件和账户会话凭据保留在 Codespace 中。完成设备凭据移交后即可删除 Codespace。[部署步骤](../README.zh-CN.md#快速开始)
+管理 MCP 工具 `begin_muse_pairing` 根据 Worker 的 Durable Object 标识确定节点 ID。授权命令调用同一工具，无需手动复制节点 ID。请在个人终端中输入验证码。
 
-首次部署需要五个 Worker 密钥。为 `MCP_ADMIN_TOKEN` 生成随机管理令牌，再为 `CREDENTIAL_ENCRYPTION_KEY` 单独生成 32 字节的随机密钥（64 个十六进制字符）。在 Cloudflare 中同时填写三个设备字段：`MUSE_NODE_ID`、`MUSE_SDK_TOKEN` 和 `MUSE_REFRESH_TOKEN`。设置管理连接器还需要 Worker 的 `/mcp` 地址以及现有侧边对话的会话 ID。
+在个人终端或专用 Codespace 中打开 MuseKnock 仓库。部署后，运行 `npm ci` 和 `npm run authorize`。输入自己的 Worker HTTPS 地址、`MCP_ADMIN_TOKEN`、SDK 令牌，以及账户邮箱或手机号。输入验证码，根据 Muse 的提示选择账户并完成双重验证。如需额外的身份验证，请先在 Muse 应用中完成，再重新运行命令。
 
-使用管理连接器注册侧边对话，并确认该对话收到测试通知。此后，可以在同一次部署中删除全部三个设备密钥。保留 `MCP_ADMIN_TOKEN` 和原来的 `CREDENTIAL_ENCRYPTION_KEY`。下次启动时，Worker 会使用保存在 Durable Object 中的加密配对信息。只保留一项或两项设备配置会暂停投递，直至补全或删除全部三项。
+使用短信登录时，可用两位字母指定手机号所属的国家或地区。使用日本手机号时，运行 `npm run authorize -- --region JP`，按国内号码格式输入数字，保留开头的 0，不加连字符。命令会按输入的格式发送号码。
 
-对于使用 `/v1/hooks/custom` 的快捷指令或其他发送端，请设置单独的随机 Worker 密钥 `HOOK_TOKEN`。如需使用只读 MCP 连接器，请另行生成随机密钥 `MCP_TOKEN`。
+发送到 Worker 的只有生成的节点 ID、SDK 令牌和设备刷新令牌。Worker 使用 `CREDENTIAL_ENCRYPTION_KEY` 加密保存这些值。账户会话只在命令的内存中使用。再次运行命令会保留 Worker 已有的配对。授权后，通过 MCP 注册目标侧边对话。
+
+Worker 会先向 Muse 刷新授权命令提交的凭据，再启用配对。对于已保存的配对，`begin_muse_pairing` 返回上次刷新结果。`unverified` 表示尚未验证，`verified` 表示刷新成功，`rejected` 表示 Muse 拒绝了凭据。
+
+授权命令使用 Muse 的账户登录服务和 SDK 令牌。该登录接口可能会变更。本地登录测试通过。在真实账户的短信测试中，即使指定了手机号所属地区，请求验证码时仍返回 HTTP 400。尚未使用真实账户完成验证码登录。此前的蓝牙流程已在 iPhone 的 Muse 应用和本地 Worker 上完成配对与投递。在 iPhone 真机测试中，Muse 在显示 Wi-Fi 列表之前就拒绝了没有 SDK 令牌的设备。因此无法用列表中的验证码在发送令牌前确认手机。独立的蓝牙验证步骤已有自动化测试，尚待真机端到端验证。 [Muse Gadget SDK tokens](https://gadgets.muse.ai/settings/sdk-tokens)
+
+如果上传配对信息后未收到确认，Mac 会核对 Worker 保存的配对。写入失败时，Worker 会重试保存新令牌。如果 Worker 在写入持久存储前停止，而 Muse 已使旧令牌失效，请使用 `--replace` 重新授权。
 
 ## 排查未收到的通知
 
@@ -23,7 +28,7 @@
 
 | 状态 | 含义与排查方法 |
 | --- | --- |
-| `queued` | 正在等待 Worker 投递。请检查保存的配对信息、设备授权和设备的 VM 租约。 |
+| `queued` | 正在等待 Worker 投递。请检查保存的配对信息、设备授权和设备的 VM 租约。 如果 Muse 对投递返回 HTTP 429，Worker 会保留正文，在投递次数和有效期限制内重试。 |
 | `sending` | Worker 已领取事件，正在连接或发送。 |
 | `sent` | Muse 已确认接收。请打开 Worker 收到通知时选中的目标对话。 |
 | `suppressed` | 来源规则、消息撤回或熔断器等都可能阻止投递。`message_retracted` 表示投递前 Slack 或 X 已删除原帖，或 LINE 已撤回消息。查看回执中的 `reason`，`source_open` 表示该来源已达到上限，`circuit_open` 表示已达到全局上限。 Worker 在每次发送前确认对话是否存在。回执中的 `side_chat_missing` 表示 Muse 返回了 404。通过 MCP 选择现有对话后即可恢复新通知的投递。已被抑制的通知不会重发。 |
@@ -40,7 +45,7 @@ Worker 使用 AES-256-GCM 加密保存的 Muse 设备令牌和 Bluesky 会话。
 
 ## 更新设备授权
 
-如果 Muse 撤销配对，请重新授权专用设备，同时设置三个新的设备密钥并部署。为新配对注册目标对话，确认收到测试通知后即可同时删除三个设备密钥。新建 Durable Object 时也需要完成首次配置。请确保每个设备身份同时仅由一个 Worker 或 SDK 守护进程使用。
+配对失效时，对同一 Worker 地址运行 `npm run authorize -- --replace`，然后重新注册侧边对话。事件来源和连接器继续使用原地址，待投递的通知仍属于原配对。如果在 Cloudflare 设置了三个 Muse 密钥，而只有 SDK 令牌有误，请直接更正并重新部署。如需将此配置切换为新配对，请先确认 Worker 能读取已保存的凭据，再同时移除三个 Muse 密钥，重新部署并运行替换命令。
 
 Worker 使用标准设备 API `api.muse.ai` 和加密的 Link 网关 `hatch.metaaivm.com`。如果设置了 `MUSE_VM_ID`，请确认该 VM 已分配给设备。未指定时，注册对话会使用默认 VM，没有默认项则使用列表中的第一项。重新选择已验证的名称时，Worker 会在注册时保存的 VM 上查找对话。要将该名称迁移到当前默认 VM，请使用相同的名称和会话 ID 再次调用 `register_side_chat`。[Gadget SDK 设备 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 
@@ -87,7 +92,8 @@ registerWebhook(app, 'ci', [
 
 | 工具 | 参数与结果 | 权限 |
 | --- | --- | --- |
-| `get_setup_status` | 根据 Worker 中的配置返回 `deviceConfigured`、`credentialStorageReady`、`active` 和 `ready`。 | 只读 |
+| `begin_muse_pairing` | 返回节点 ID 和登录步骤，或已保存配对的最近验证结果。授权命令在更换配对时使用 `replace: true`。 | 管理员 |
+| `get_setup_status` | 根据 Worker 中的配置返回 `deviceConfigured`、`credentialStorageReady`、`active` 和 `ready`。如果 `CIRCUIT_BREAKER` 配置无效，则返回 `ready: false` 和 `reason: invalid_circuit_breaker`。 | 只读 |
 | `send_test_notification` | `requestId`（UUID）。向当前目标对话排入一条固定内容的测试通知，返回回执。来源为 `museknock-test`，事件类型为 `test`。 | 管理 |
 | `list_side_chats` | 列出在 MuseKnock 中注册的名称、会话 ID 和当前目标。 | 只读 |
 | `register_side_chat` | 用 `name`、`sessionId` 新建或更新记录。尚无投递目标时自动选中首次注册的对话。 | 管理 |
@@ -99,9 +105,9 @@ registerWebhook(app, 'ci', [
 | `set_source_paused` | `source`、`paused`（布尔值）。 | 管理 |
 | `set_event_filter` | `source`、`types`（允许的事件类型数组）。空数组允许所有类型。 | 管理 |
 
-注册名区分大小写，去除首尾空格后长度为 1 至 64 个字符。首位使用 Unicode 字母或数字，之后还允许组合标记、空格、英文句点、下划线和连字符。会话 ID 区分大小写，允许使用 1 至 64 个 ASCII 字母、数字或连字符。注册或切换目标时，Worker 会先向 Muse 查询会话是否存在，查询过程不会发送消息。要继续原有对话，请使用设备发消息时使用的会话 ID。Worker 无法加载配对信息或尚未选定目标对话时，已通过身份验证的通知请求将收到 HTTP `503`。
+注册名区分大小写，去除首尾空格后长度为 1 至 64 个字符。首位使用 Unicode 字母或数字，之后还允许组合标记、空格、英文句点、下划线和连字符。会话 ID 区分大小写，允许使用 1 至 64 个 ASCII 字母、数字或连字符。注册或切换目标时，Worker 会先向 Muse 查询会话是否存在，查询过程不会发送消息。要继续原有对话，请使用该侧边对话的会话 ID。Worker 无法加载配对信息或尚未选定目标对话时，已通过身份验证的通知请求将收到 HTTP `503`。
 
-轮换 Webhook 或 MCP 令牌时，在 Cloudflare 更新对应的 Worker 密钥并部署，再更新使用该令牌的发送端或连接器。
+轮换 Webhook 或 MCP 令牌时，在 Cloudflare 更新对应的 Worker 密钥并部署，再更新使用该令牌的发送端或连接器。 如果曾将 Telegram 的 Webhook 密钥用于 MCP 或通用 Webhook，请分别为两者生成新值，并通过 `setWebhook` 向 Telegram 注册新的密钥。
 
 ## 验证 SDK 兼容性
 
@@ -109,6 +115,4 @@ registerWebhook(app, 'ci', [
 
 ## 可选的 CLI 配置
 
-在 Node.js 22.12 或更高版本中，运行 `npm ci` 和 `npm run setup -- --pairing /path/to/pairing.json`。使用社区登录状态时将参数换为 `--device-state /path/to/state.json`。编辑生成的 `.dev.vars`，补全设备凭据。该脚本还会分别生成自定义 Webhook 和只读 MCP 的令牌。对于新 Worker，请将生成的 `CREDENTIAL_ENCRYPTION_KEY` 备份到密码管理器中。部署已有 Worker 时，请使用原密钥。运行 `npx wrangler login` 后，用 `npm run deploy:local` 上传设置。部署完成后，通过 MCP 注册目标对话。使用 `npm test`、`npm run check` 和 `npm run deploy -- --dry-run` 进行本地验证。在 `npm run dev` 中发送真实消息时，请使用单独的设备凭据。尚未验证向真实 Muse 账户投递。
-
-如果已在 Cloudflare 中删除三个设备密钥，请在下次从本地部署前移除 `.dev.vars` 中对应的三项。
+使用 Node.js 22.12 或更高版本，在本仓库中运行 `npm ci` 和 `npm run setup`，在 `.dev.vars` 中生成本地 Worker 密钥。已有 Worker 需要使用原来的加密密钥。运行 `npx wrangler login` 和 `npm run deploy:local`，然后通过 MCP 检查配对状态。

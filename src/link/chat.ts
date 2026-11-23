@@ -200,6 +200,7 @@ export async function sendOverLink(
         if (frame.status !== undefined) {
           if (chatStatus !== undefined || frame.status < 100 || frame.status > 599)
             throw new Error('Invalid Muse response status')
+          if (frame.status === 429) return 'not_sent'
           chatStatus = frame.status
         }
         chatBytes += frame.body.length

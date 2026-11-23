@@ -141,9 +141,10 @@ test('Slack queues UTF-8 previews with channel and message timestamps for long p
   const longText = '文🌱'.repeat(6000)
   const escapedText = String.fromCharCode(2).repeat(12_000)
   const ts = '1234567890.123456'
+  const shortTs = '1234567889.123456'
   const editTs = '1234567891.123456'
   for (const [key, event] of Object.entries({
-    short: { text: 'Hello', ts },
+    short: { text: 'Hello', ts: shortTs },
     long: { text: longText, ts },
     edit: { subtype: 'message_changed', ts: editTs, text: longText, message: { text: escapedText, ts } },
   })) {
@@ -162,7 +163,7 @@ test('Slack queues UTF-8 previews with channel and message timestamps for long p
     assert.doesNotMatch(text, /callback-secret|private-url/)
     const summary = JSON.parse(text)
     assert.equal(summary.channel, 'C123')
-    assert.equal(summary.ts, key === 'edit' ? editTs : ts)
+    assert.equal(summary.ts, { short: shortTs, edit: editTs, long: ts }[key])
     if (key === 'short') {
       assert.equal(summary.text, 'Hello')
     } else {
@@ -192,7 +193,8 @@ test('Slack retracts queued messages and edits in either arrival order and ident
     edit: { type: 'message', subtype: 'message_changed', channel, ts: '2', message: { ts, text: 'edited' } },
     other: { type: 'message', channel: 'C2', ts, text: 'keep' },
     deletion: { type: 'message', subtype: 'message_deleted', channel, deleted_ts: ts, ts: '3' },
-    late: { type: 'message', channel, ts, text: 'late' },
+    before: { type: 'message', subtype: 'message_deleted', channel, deleted_ts: '4', ts: '5' },
+    late: { type: 'message', channel, ts: '4', text: 'late' },
     reaction: { type: 'reaction_added', item, reaction: 'eyes' },
   })) {
     const body = JSON.stringify({ type: 'event_callback', team_id: 'T1', event_id, event })
@@ -201,9 +203,37 @@ test('Slack retracts queued messages and edits in either arrival order and ident
   const rows = await worker.storedEvents()
   const states = Object.fromEntries(rows.map(({ key, state }) => [key, state]))
   assert.deepEqual(states, {
-    original: 'suppressed', mention: 'suppressed', edit: 'suppressed', other: 'queued',
-    deletion: 'queued', late: 'suppressed', reaction: 'queued',
+    original: 'suppressed', edit: 'suppressed', other: 'queued',
+    deletion: 'queued', before: 'queued', late: 'suppressed', reaction: 'queued',
   })
   for (const row of rows.filter(row => row.state === 'suppressed')) assert.equal(row.text, '')
   assert.deepEqual(JSON.parse(rows.find(row => row.key === 'reaction')!.text).item, item)
+})
+
+test('Slack overlapping subscriptions queue one creation under either callback order and type filter', async (t) => {
+  for (const allowed of [[], ['message'], ['app_mention']]) {
+    const worker = await startConfiguredWorker(undefined, secrets)
+    t.after(() => worker.close())
+    const admin = await connect(new URL('/mcp', worker.url), 'MCP_ADMIN_TOKEN-test')
+    t.after(() => admin.close())
+    const rule = await admin.callTool({
+      name: 'set_event_filter',
+      arguments: { source: 'slack', types: allowed },
+    })
+    assert.ok(!rule.isError)
+    const pairs = [['app_mention', 'message'], ['message', 'app_mention']]
+    for (const [i, pair] of pairs.entries()) {
+      for (const type of pair) {
+        const body = JSON.stringify({
+          type: 'event_callback', event_id: type + i, team_id: 'T1',
+          event: { type, text: 'hello', channel: 'C1', ts: '1234.00000' + i },
+        })
+        for (let attempt = 0; attempt < 2; attempt++)
+          assert.equal((await post(worker.url, 'slack', body, slackHeaders(body))).status, 200)
+      }
+    }
+    const queued = (await worker.storedEvents()).filter(row => row.state === 'queued')
+    assert.deepEqual(queued.map(row => row.type), pairs.map(pair => allowed[0] ?? pair[0]))
+    assert.deepEqual(queued.map(row => JSON.parse(row.text).ts), ['1234.000000', '1234.000001'])
+  }
 })

@@ -4,18 +4,23 @@
 
 ## Authorize a device
 
-Prepare one device identity exclusively for this Worker. Get the SDK token from **Account → SDK tokens** on [Muse Gadgets](https://gadgets.muse.ai/).
+For Mac and phone pairing, run `npm run authorize -- --bluetooth` on the Mac. The command uses uv to install the macOS Bluetooth bindings and the pinned Muse SDK pairing protocol. The phone app authorizes a new device for this Worker. To renew the same Worker’s pairing, add `--replace`. The following verification-code method is available for accounts that Muse allows to sign in with a code. Follow the phone verification steps in the [quick start](../README.md#quick-start).
 
-- **Official pairing.** Pair a dedicated gadget in the Muse app. Stop its SDK daemon before taking the current values from `pairing.json` (normally in `/var/lib/musegadget/` on Linux). Use `node_id`, `refresh_token`, and the SDK token used at pairing. [Official pairing instructions](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md#install)
-- **Community sign-in from a browser.** If you have no paired hardware and are comfortable signing in with a third-party tool, open the Muse Desktop Bridge repository in a personal GitHub Codespace. In its browser terminal run `git checkout 3b6d0e0665d40d5537b21b701c18327e288741d9`, then `python3 muse-auth/muse_auth.py setup`. Complete the prompts for your own account, including OTP or two-factor authentication, and supply your SDK token. Account checkpoints may require the Muse app. This path has not been tested with a live account in Codespaces. [Community sign-in](https://github.com/chaitanyarahalkar/muse-desktop-bridge/blob/3b6d0e0665d40d5537b21b701c18327e288741d9/muse-auth/README.md) · [Open Muse Desktop Bridge in a Codespace](https://codespaces.new/chaitanyarahalkar/muse-desktop-bridge) · [GitHub Codespaces instructions](https://docs.github.com/en/codespaces/developing-in-a-codespace/creating-a-codespace-for-a-repository)
+If you already have a valid pairing for this Worker, you can use the Cloudflare dashboard. Under **Settings → Variables and Secrets**, add its matching `MUSE_NODE_ID`, `MUSE_SDK_TOKEN` and `MUSE_REFRESH_TOKEN` as secrets and deploy them together. Call `begin_muse_pairing` through the admin connector. When it returns `configured`, continue with side chat registration. The command below is for a fresh pairing.
 
-For community sign-in, open `muse-auth/.state/state.json` in your private Codespace editor and copy only `sdk_token`, `device.device_id`, and `device.refresh_token` to the corresponding Worker secrets in the deployment form. Keep the full file and the account’s session credentials inside your Codespace. Once the Worker has the device credentials, you can delete the Codespace. [Deployment steps](../README.md#quick-start)
+The admin MCP tool `begin_muse_pairing` returns a node ID derived from the Worker’s Durable Object identity. The command calls the same tool, so you never need to copy the node ID. Enter verification codes only in the private terminal.
 
-For the first deployment, set these five Worker secrets. Generate an independent random bearer token for `MCP_ADMIN_TOKEN` and a separate 32-byte random key encoded as 64 hexadecimal characters for `CREDENTIAL_ENCRYPTION_KEY`. Enter the three device values together as `MUSE_NODE_ID`, `MUSE_SDK_TOKEN`, and `MUSE_REFRESH_TOKEN`. The admin connector also needs your Worker’s `/mcp` URL and the existing side chat’s session ID.
+Use a private terminal in the MuseKnock repository (a personal Codespace works). After deployment run `npm ci` and `npm run authorize`. Enter the HTTPS origin of your own Worker, its `MCP_ADMIN_TOKEN`, your SDK token and your account email or phone number. Complete the verification code and any account selection or two-factor challenge Muse offers. If Muse requires an account checkpoint, complete it in the Muse app before restarting.
 
-Register the side chat with the admin connector and confirm that a test notification reaches it. You can then remove all three device secrets together in one deployment. Keep `MCP_ADMIN_TOKEN` and the original `CREDENTIAL_ENCRYPTION_KEY`. On its next start, the Worker uses the encrypted pairing in its Durable Object. Supplying just one or two of the three device values blocks delivery until the configuration is complete or all three are removed.
+For SMS sign-in you can pass the two-letter country code for your phone number. For a Japanese mobile number, run `npm run authorize -- --region JP` and enter the domestic number in digits, keeping the leading zero. The command sends the digits as entered.
 
-For Shortcuts and other senders using `/v1/hooks/custom`, set a separate random Worker secret named `HOOK_TOKEN`. For a read-only MCP connector, set another independent secret named `MCP_TOKEN`.
+Only the generated node ID, SDK token and device refresh token go to your Worker. It keeps them encrypted using `CREDENTIAL_ENCRYPTION_KEY`. The command keeps the account session in memory. An already paired Worker retains its current pairing. Register the existing side chat through MCP after authorization.
+
+When the Worker imports credentials from the authorization command, it refreshes them with Muse before activating them. For a saved pairing, `begin_muse_pairing` reports the last refresh result. `unverified` means the Worker has yet to confirm the credentials. `verified` means a refresh succeeded. `rejected` means Muse refused the credentials.
+
+The authorization command uses the Muse account sign-in service and your SDK token. This sign-in interface can change. The local sign-in tests pass. A live SMS trial received HTTP 400 at the verification-code request, including with the phone region supplied. This verification-code sign-in remains unverified with a live account. The earlier Mac pairing flow completed with the Muse iPhone app and a local Worker. In a physical iPhone test, Muse rejected a gadget without an SDK token before displaying the Wi-Fi list. A verification code in that list cannot identify the phone before token release. The separate Bluetooth verification step has automated coverage and still needs an end-to-end iPhone test. [Muse Gadget SDK tokens](https://gadgets.muse.ai/settings/sdk-tokens)
+
+If the pairing upload acknowledgement is lost, the Mac checks which pairing the Worker saved. The Worker retries a failed write with the newly issued token. If the Worker stops before that token reaches durable storage and Muse has already invalidated the old token, renew the pairing with `--replace`.
 
 ## Trace a notification
 
@@ -23,7 +28,7 @@ Ask Muse to check the delivery status for the receipt ID. You can also repeat th
 
 | State | What it means |
 | --- | --- |
-| `queued` | Waiting for a Worker delivery attempt. Check the saved pairing, device authorization, and VM lease. |
+| `queued` | Waiting for a Worker delivery attempt. Check the saved pairing, device authorization, and VM lease. If Muse returns HTTP 429 for the post, the Worker keeps the body and retries within the delivery budget and expiry window. |
 | `sending` | The Worker has claimed this event and is connecting or posting. |
 | `sent` | Muse acknowledged the post. Open the side chat selected when the Worker accepted the notification. |
 | `suppressed` | The Worker stopped delivery. A source rule, a retracted message, or the circuit breaker can suppress a queued event. `message_retracted` means Slack or X deleted the message, or LINE withdrew it, before delivery. For a breaker decision, check the receipt's `reason`. `source_open` means this source reached its limit. `circuit_open` means the combined attempt count reached the global limit. The Worker checks that the chat exists immediately before posting. A `side_chat_missing` receipt means Muse returned 404. Select an existing chat through MCP to resume new deliveries. Previously suppressed notifications stay suppressed. |
@@ -40,7 +45,7 @@ The Worker encrypts saved Muse device tokens and Bluesky sessions with AES-256-G
 
 ## Renew device authorization
 
-If Muse revokes the pairing, authorize a dedicated device again and deploy all three new device values together. Register the side chat for the new pairing and confirm a test notification before removing those three settings. A fresh Durable Object also needs the initial setup. Keep each authorized device identity exclusive to one running Worker or SDK daemon.
+To replace a revoked pairing, run `npm run authorize -- --replace` for the same Worker URL, then register the side chat again. Existing senders and connectors keep their URLs. Pending deliveries retain their original pairing. If you configured the three Muse secrets in Cloudflare, correct an incorrect SDK token there and redeploy. To switch from those secrets to a new pairing, first check that the Worker can open its saved credentials, then remove all three Muse secrets together, redeploy and run the replacement command.
 
 The Worker uses the standard device API at `api.muse.ai` and the encrypted Link gateway at `hatch.metaaivm.com`. If you set `MUSE_VM_ID`, check that a lease exists for that exact VM. Without an explicit VM, registration uses the default lease or the first available lease. Selecting a verified name again uses its saved VM. To move the name to the current default VM, call `register_side_chat` again with the name and session ID. [Gadget SDK device API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 
@@ -87,7 +92,8 @@ After redeploying, send notifications to `POST /v1/hooks/ci`. To verify a source
 
 | Tool | Arguments and result | Access |
 | --- | --- | --- |
-| `get_setup_status` | Returns `deviceConfigured`, `credentialStorageReady`, `active`, and `ready` from local configuration. | Read |
+| `begin_muse_pairing` | Returns the node ID and private sign-in steps, or the last verification result for a saved pairing. The authorization command uses `replace: true` to request replacement. | Admin |
+| `get_setup_status` | Returns `deviceConfigured`, `credentialStorageReady`, `active`, and `ready` from local configuration. An invalid `CIRCUIT_BREAKER` setting returns `ready: false` and `reason: invalid_circuit_breaker`. | Read |
 | `send_test_notification` | `requestId` (UUID). Enqueues a fixed test notification for the active chat and returns its receipt. The source is `museknock-test` and the event type is `test`. | Admin |
 | `list_side_chats` | Lists locally registered names and session IDs, and identifies the active destination. | Read |
 | `register_side_chat` | `name`, `sessionId`. Creates or updates the registration. The first chat becomes active when no destination is configured. | Admin |
@@ -99,9 +105,9 @@ After redeploying, send notifications to `POST /v1/hooks/ci`. To verify a source
 | `set_source_paused` | `source`, `paused` (boolean). | Admin |
 | `set_event_filter` | `source`, `types` (array of allowed event types). An empty array allows all types. | Admin |
 
-Registration names are case-sensitive, with 1 to 64 characters after trimming. Start with a Unicode letter or number. You may then use letters, numbers, combining marks, spaces, periods, underscores, and hyphens. Session IDs are case-sensitive and accept 1–64 ASCII letters, digits or hyphens. Registration and selection verify that the session exists on Muse before changing the destination. Use the original gadget session ID to continue an existing chat. An authenticated notification returns HTTP `503` until the Worker can load the pairing and has an active destination.
+Registration names are case-sensitive, with 1 to 64 characters after trimming. Start with a Unicode letter or number. You may then use letters, numbers, combining marks, spaces, periods, underscores, and hyphens. Session IDs are case-sensitive and accept 1–64 ASCII letters, digits or hyphens. Registration and selection verify that the session exists on Muse before changing the destination. Use the ID of the existing side chat. An authenticated notification returns HTTP `503` until the Worker can load the pairing and has an active destination.
 
-To rotate webhook or MCP tokens, update the corresponding Worker secrets in Cloudflare and deploy the changes. Update the sender or connector that uses each token.
+To rotate webhook or MCP tokens, update the corresponding Worker secrets in Cloudflare and deploy the changes. Update the sender or connector that uses each token. If your Telegram webhook secret was also used as an MCP or custom webhook token, rotate both to independent values and register the new Telegram secret with `setWebhook`.
 
 ## Verify SDK compatibility
 
@@ -109,6 +115,4 @@ With the Muse Gadget SDK checked out at `e17081a45941415d483642dbe21c2a2e6ef85a1
 
 ## Optional CLI setup
 
-With Node.js 22.12 or later, run `npm ci` and `npm run setup -- --pairing /path/to/pairing.json`. For community sign-in use `--device-state /path/to/state.json` instead. Complete the device credentials in the generated `.dev.vars`. The script also generates separate tokens for custom webhooks and read-only MCP access. For a new Worker, back up its generated `CREDENTIAL_ENCRYPTION_KEY` in your password manager. For an existing Worker, use its original key before deploying. Run `npx wrangler login`, then `npm run deploy:local` to upload the settings. Register the destination through MCP. Use `npm test`, `npm run check`, and `npm run deploy -- --dry-run` for local verification. Use separate device credentials for live `npm run dev` sessions. Delivery to a live Muse account has not been verified.
-
-Before the next local deployment, remove the three device assignments from `.dev.vars` if you removed them in Cloudflare.
+With Node.js 22.12 or later, run `npm ci` and `npm run setup` in this repository to generate local Worker secrets in `.dev.vars`. Use the original encryption key for an existing Worker. Run `npx wrangler login` and `npm run deploy:local`, then check the pairing through MCP.

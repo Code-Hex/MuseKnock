@@ -1,7 +1,12 @@
 import type { BreakerStatus, CircuitBreaker, SuppressionReason } from './circuit-breaker.ts'
 import type { Claim, Delivery, Outcome } from './delivery.ts'
 
-export type HookEvent = Omit<Delivery, 'id'> & { key: string; parentId?: string; messageId?: string }
+export type HookEvent = Omit<Delivery, 'id'> & {
+  key: string
+  parentId?: string
+  messageId?: string
+  coalesceKey?: string
+}
 type State = 'queued' | 'sending' | 'sent' | 'unknown' | 'suppressed' | 'expired'
 type Receipt =
   | { id: string; state: State; duplicate: boolean }
@@ -23,10 +28,12 @@ const pendingLifetime = 60 * minute
 const deliveryTimeout = 2 * minute
 const historyLifetime = 7 * 24 * 60 * minute
 
+const typeFiltered = `json_array_length(types) > 0 AND
+  NOT EXISTS (SELECT 1 FROM json_each(types) WHERE value = events.type)`
+
 const blockedByRule = `EXISTS (
   SELECT 1 FROM rules WHERE rules.source = events.source AND (
-    paused = 1 OR (json_array_length(types) > 0 AND
-      NOT EXISTS (SELECT 1 FROM json_each(types) WHERE value = events.type))
+    paused = 1 OR (${typeFiltered})
   )
 )`
 
@@ -98,6 +105,11 @@ export class DeliveryQueue {
       CREATE INDEX IF NOT EXISTS source_message ON events(source, messageId) WHERE messageId IS NOT NULL;
       CREATE INDEX IF NOT EXISTS history ON events(createdAt);
       CREATE INDEX IF NOT EXISTS pending ON events(state, createdAt);
+      CREATE TABLE IF NOT EXISTS event_groups (
+        source TEXT NOT NULL, groupKey TEXT NOT NULL,
+        id TEXT NOT NULL UNIQUE REFERENCES events(id) ON DELETE CASCADE,
+        PRIMARY KEY (source, groupKey)
+      );
       CREATE TABLE IF NOT EXISTS retractions (
         source TEXT NOT NULL, messageId TEXT NOT NULL, receivedAt INTEGER NOT NULL,
         PRIMARY KEY (source, messageId)
@@ -202,6 +214,13 @@ export class DeliveryQueue {
         }>('SELECT id, state FROM events WHERE source = ? AND key = ?', event.source, event.key)
         .toArray()[0]
       if (existing) return { ...existing, duplicate: true }
+      if (event.coalesceKey) {
+        const grouped = this.sql.exec<{ id: string; state: State }>(
+          'SELECT events.id, state FROM event_groups JOIN events USING (id) WHERE event_groups.source = ? AND groupKey = ?',
+          event.source, event.coalesceKey,
+        ).toArray()[0]
+        if (grouped) return { ...grouped, duplicate: true }
+      }
 
       const target = this.activeTarget()
       if (!target) return { noDestination: true }
@@ -231,6 +250,14 @@ export class DeliveryQueue {
         target.vmId,
         event.messageId ?? null,
       )
+      if (event.coalesceKey) {
+        // A filtered callback cannot reserve the message for its other subscribed event types.
+        this.sql.exec(
+          `INSERT INTO event_groups SELECT source, ?, id FROM events WHERE id = ? AND NOT EXISTS
+           (SELECT 1 FROM rules WHERE rules.source = events.source AND ${typeFiltered})`,
+          event.coalesceKey, id,
+        )
+      }
       if (event.messageId) {
         this.sql.exec(
           `UPDATE events SET state = 'suppressed', text = '', reason = 'message_retracted'

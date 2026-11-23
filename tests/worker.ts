@@ -16,6 +16,15 @@ export async function startWorker(
         import { Inbox as ProductionInbox } from './src/inbox.ts'
         export class Inbox extends ProductionInbox {
           async fetch(request) {
+            if (new URL(request.url).pathname === '/fail-credential-writes') {
+              const put = this.credentials.put.bind(this.credentials)
+              let failures = Number(await request.text())
+              this.credentials.put = async (...args) => {
+                if (failures-- > 0) throw new Error('Fixture credential write failed')
+                return put(...args)
+              }
+              return new Response(null, { status: 204 })
+            }
             if (new URL(request.url).pathname === '/alarm') return Response.json(await this.ctx.storage.getAlarm())
             if (request.method === 'GET') {
               return Response.json(this.ctx.storage.sql.exec('SELECT key, type, state, text FROM events ORDER BY rowid').toArray())
@@ -67,6 +76,10 @@ export async function startWorker(
         const result = await stub.fetch('http://fixture.test')
         if (!result.ok) throw new Error(await result.text())
         return await result.json() as { key: string; type: string; state: string; text: string }[]
+      },
+      async failCredentialWrites(count: number) {
+        const result = await stub.fetch('http://fixture.test/fail-credential-writes', { method: 'POST', body: String(count) })
+        if (!result.ok) throw new Error(await result.text())
       },
       async scheduledAlarm() {
         const result = await stub.fetch('http://fixture.test/alarm')

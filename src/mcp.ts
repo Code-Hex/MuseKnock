@@ -20,6 +20,7 @@ type DeliveryControls = Pick<
   | 'registerSideChat'
   | 'setActiveSideChat'
   | 'getSetupStatus'
+  | 'beginPairing'
   | 'sendTestNotification'
 >
 
@@ -60,7 +61,7 @@ export async function handleMcp(
     'get_setup_status',
     {
       description:
-        'Check whether the Worker has device credentials in the expected format, can open encrypted credential storage, and has an active destination. Use get_delivery_breaker to check whether delivery attempts are allowed. This check makes no request to Muse.',
+        'Check local webhook readiness, including device credentials, encrypted storage, the active destination and circuit breaker configuration. Use get_delivery_breaker to inspect remaining delivery attempts. This check makes no request to Muse.',
       annotations: readOnly,
     },
     async () => result(await inbox.getSetupStatus()),
@@ -127,6 +128,35 @@ export async function handleMcp(
   }
 
   if (role === 'admin') {
+    server.registerTool(
+      'begin_muse_pairing',
+      {
+        description: 'Get setup instructions or the existing pairing and its last verification result. Set replace only when the operator requests reauthorization. Takes no credentials.',
+        inputSchema: { replace: z.boolean().optional() },
+        annotations: readOnly,
+      },
+      async ({ replace }) => {
+        const pairing = await inbox.beginPairing(replace)
+        if (pairing.state === 'managed_by_secrets') return {
+          ...failure('Correct the three Muse bootstrap secrets in Cloudflare, or remove all three together before replacing this stored pairing.'),
+          structuredContent: { state: pairing.state },
+        }
+        if (pairing.state === 'unavailable') return failure('Check the Worker encryption key and Muse credential configuration.')
+        if (pairing.state === 'configured') return result(pairing)
+        return result({
+          ...pairing,
+          instructions: [
+            'On a Bluetooth-enabled Mac with Node.js and uv, open the MuseKnock repository and run npm ci.',
+            'Run npm run authorize -- --bluetooth' + (pairing.replaces ? ' --replace.' : '.'),
+            'Enter the Worker URL, admin token and Gadget SDK token in the terminal.',
+            'On your phone, use a Bluetooth LE tool to write the one-time code as directed by the terminal.',
+            'When the Mac confirms the phone, disconnect the tool and select the printed gadget name in the Muse app on that phone.',
+            'Then register your existing side chat through MCP.',
+          ].join(' '),
+        })
+      },
+    )
+
     server.registerTool(
       'send_test_notification',
       {

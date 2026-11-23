@@ -7,11 +7,7 @@ type Enqueue = (
 ) => Promise<BatchResult>
 type Transport = (url: URL, init: RequestInit) => Promise<Response>
 const snowflake = z.string().regex(/^[1-9]\d{0,19}$/)
-const message = z.object({
-  id: snowflake,
-  channel_id: snowflake,
-  type: z.number().int(),
-  author: z.object({ id: snowflake, username: z.string().max(80) }),
+const messageBody = z.object({
   content: z.string(),
   attachments: z.array(
     z.object({
@@ -21,6 +17,31 @@ const message = z.object({
     }),
   ),
 })
+const message = messageBody.extend({
+  id: snowflake,
+  channel_id: snowflake,
+  type: z.number().int(),
+  author: z.object({ id: snowflake, username: z.string().max(80) }),
+  message_reference: z.object({ type: z.number().int().optional() }).optional(),
+  message_snapshots: z.array(z.object({ message: messageBody })).optional(),
+})
+
+type MessageBody = z.infer<typeof messageBody>
+
+function summarizeBody(body: MessageBody, companion?: MessageBody) {
+  // A forward shares one notification's excerpt budget with the forwarding message.
+  const chars = Math.max(1000, 2000 - (companion?.content.length ?? 0))
+  const attachments = Math.max(5, 10 - (companion?.attachments.length ?? 0))
+  return {
+    content: Array.from(body.content).slice(0, chars).join(''),
+    attachments: body.attachments.slice(0, attachments).map((attachment) => ({
+      filename: Array.from(attachment.filename).slice(0, 150).join(''),
+      size: attachment.size,
+      content_type: attachment.content_type?.slice(0, 128),
+    })),
+  }
+}
+
 const channel = z.object({ id: snowflake, type: z.literal(0) })
 class DiscordBackoff extends Error {
   constructor(readonly seconds: number) {
@@ -90,21 +111,20 @@ export async function pollDiscord(
     const fresh = history.reverse().filter((m) => BigInt(m.id) > boundary)
     const events = fresh
       .filter((m) => m.type === 0 || m.type === 19)
-      .map((m) => ({
-        key: m.id,
-        type: 'message',
-        text: JSON.stringify({
-          channel_id: channelId,
-          id: m.id,
-          author: m.author,
-          content: Array.from(m.content).slice(0, 2000).join(''),
-          attachments: m.attachments.slice(0, 10).map((a) => ({
-            filename: Array.from(a.filename).slice(0, 150).join(''),
-            size: a.size,
-            content_type: a.content_type?.slice(0, 128),
-          })),
-        }),
-      }))
+      .map((m) => {
+        const forward = m.message_reference?.type === 1 ? m.message_snapshots?.[0]?.message : undefined
+        return {
+          key: m.id,
+          type: 'message',
+          text: JSON.stringify({
+            channel_id: channelId,
+            id: m.id,
+            author: m.author,
+            ...summarizeBody(m, forward),
+            forwarded: forward && summarizeBody(forward, m),
+          }),
+        }
+      })
     if (events.length && (await enqueue(events)) !== 'accepted') return state
     return { channelId, lastId: fresh.at(-1)?.id ?? state.lastId }
   } catch (error) {

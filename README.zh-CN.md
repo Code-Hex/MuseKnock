@@ -26,33 +26,39 @@ flowchart LR
 
 ## 快速开始
 
-请准备 Cloudflare 和 GitHub 账户、已获授权的 Muse 设备凭据，以及设备向现有对话发消息时使用的确切会话 ID。SDK 令牌仅供你在自己的 Muse 账户中用于个人、非商业用途。[首次授权设备](docs/operations.zh-CN.md#首次授权设备) · [SDK 令牌使用条款](https://gadgets.muse.ai/sdk-terms)
+请准备 Cloudflare 和 GitHub 账户、已有 Muse 侧边对话的会话 ID，以及 Muse Gadget SDK 令牌（`MUSE_SDK_TOKEN`）。该令牌仅供个人非商业用途。[申请 SDK 令牌](https://gadgets.muse.ai/settings/sdk-tokens) · [使用条款](https://gadgets.muse.ai/sdk-terms)
 
-**1. 从 Cloudflare 部署。** 点击 **Deploy to Cloudflare**，选择 Worker 名称，填写以下五项密钥。在密码管理器中分别生成管理令牌和加密密钥。 [Cloudflare 部署按钮说明](https://developers.cloudflare.com/workers/platform/deploy-buttons/#worker-environment-variables-and-secrets)
+**1. 部署到 Cloudflare。** 选择 Worker 名称，分别生成并填写以下两项密钥。将两者保存在密码管理器中，并记下部署后的 HTTPS 地址。
 
 | Worker 密钥 | 值 | 使用时间 |
 | --- | --- | --- |
 | `MCP_ADMIN_TOKEN` | 用于 Muse 管理连接器的长随机令牌 | 长期保留 |
 | `CREDENTIAL_ENCRYPTION_KEY` | 用于加密凭据的独立 32 字节密钥。在密码管理器中随机生成 64 个十六进制字符（0–9、a–f），并妥善备份。 | 长期保留 |
-| `MUSE_NODE_ID` | 官方 `pairing.json` 中的 `node_id`，或社区版 `state.json` 中的 `device.device_id` | 首次设置 |
-| `MUSE_REFRESH_TOKEN` | 官方文件中的 `refresh_token`，或社区版文件中的 `device.refresh_token` | 首次设置 |
-| `MUSE_SDK_TOKEN` | 官方设备配对时使用的 SDK 令牌，或社区版文件中的 `sdk_token` | 首次设置 |
-
-如果你测试过早期开发版，请使用新名称部署 Worker，以获得独立的空存储，并使用仅供新 Worker 使用的有效设备凭据。重新注册目标对话，再将连接器和事件来源指向新 URL。开发版的队列、规则和凭据不会自动迁移。
-
-如果已有执行器或 SDK 守护进程使用相同的设备身份，请先将其停止并关闭自动重启。移交后 Worker 会刷新设备凭据。只将表中指定的三项设备信息复制到 Cloudflare，原始文件和账户凭据应保留在你自己手中。部署 Worker，复制部署完成后显示的 HTTPS 地址。
 
 **2. 连接 Muse。** 在 Muse 的 **Settings → Connectors** 中添加一个自定义连接器。在已部署 Worker 的 URL 后加上 `/mcp`，选择 Bearer 身份验证，将 `MCP_ADMIN_TOKEN` 填入令牌栏。[Muse 连接器指南](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
-**3. 通过 Muse 注册对话并测试投递。** 可以按顺序向连接器提出以下请求。
+**3. 请 Muse 开始配对。** 如果返回 `configured`，请继续第 4 步。如果返回 `rejected`，请先[更新配对](docs/operations.zh-CN.md#更新设备授权)。如果返回 `awaiting_authorization`，请在手机上登录 Muse，并在支持蓝牙的 Mac 上打开此仓库。安装 Node.js 22.12 或更高版本和 [uv](https://docs.astral.sh/uv/getting-started/installation/)，然后运行以下命令。
+
+仅首次授权需要 Mac。手机授权完成后，Mac 会停止蓝牙广播，之后由 Worker 通过互联网上的 Muse Link 投递通知。
+
+```sh
+npm ci
+npm run authorize -- --bluetooth
+```
+
+在 Mac 终端输入 Worker 地址、管理令牌和 Gadget SDK 令牌。保持终端打开，直到配对完成。
+
+1. 在使用 Muse 的 iPhone 上打开支持写入特征值的蓝牙 LE 工具，例如 [nRF Connect](https://github.com/nordicsemi/IOS-nRF-Connect)。连接到与 Mac 上显示的 `MuseGadget…` 名称完全相同的设备。
+2. 打开终端显示的服务和验证特征，选择 **Write with response**，写入 Mac 上显示的 16 位十六进制验证码。Mac 显示 **Phone verified** 后，在蓝牙工具中断开连接。
+3. 在同一部 iPhone 的 Muse 中打开 **Settings → Devices**，启用 **Allow community devices**（部分版本称为 **Developer mode**），然后点击 **＋**。如果需要选择类型，请选 **Muse Gadget**，再选同一设备名称。如果 Muse 询问 Wi-Fi，请选 **Use current connection**。Worker 确认保存配对后，即可关闭 Mac。[授权详情](docs/operations.zh-CN.md#首次授权设备)
+
+**4. 通过 Muse 注册对话并测试投递。** 可以按顺序向连接器提出以下请求。
 
 1. “检查我的 MuseKnock 配置。” `get_setup_status` 检查 Worker 中的配置。下面的测试消息用于验证实际投递。
-2. “将现有会话 `已有会话ID` 注册为‘构建通知’，并设为通知目标。”请使用设备原来的 `--session-id`。`register_side_chat` 保存的是 MuseKnock 中的名称。MuseKnock 会先向所选 Muse VM 确认会话存在，再保存或切换目标。[Gadget SDK 侧边对话说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
+2. “将现有会话 `已有会话ID` 注册为‘构建通知’，并设为通知目标。”请使用已有侧边对话的会话 ID。`register_side_chat` 保存的是 MuseKnock 中的名称。MuseKnock 会先向所选 Muse VM 确认会话存在，再保存或切换目标。[Gadget SDK 侧边对话说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “发送一条测试通知并检查回执。”Muse 使用新的 UUID 作为 `requestId` 调用 `send_test_notification`，然后用返回的回执 ID 调用 `get_delivery_status`。当状态为 `sent` 时，打开所选对话查看消息。重试同一次测试时，请使用相同的请求 ID。
 
-测试回执显示 `sent` 后，可以在 Cloudflare 中一次删除这三项首次设置用的 Muse 密钥，并部署更改。请保留 `MCP_ADMIN_TOKEN` 和原来的 `CREDENTIAL_ENCRYPTION_KEY`。Worker 会从加密存储中读取配对信息和最新的刷新令牌。再次调用 `get_setup_status`，确认 `ready` 为 true。
-
-**4. 连接事件来源。** 如需接入 Slack、LINE、Twilio、Telegram、企业微信、GitHub 或 X，请参阅[直接连接服务](#直接连接服务)。Bluesky 和 Discord 的设置见[连接 Bluesky](#连接-bluesky)和[连接 Discord](#连接-discord)。支持自定义 Bearer 请求头的服务可以使用下面的通用 Webhook。
+**5. 连接事件来源。** 如需接入 Slack、LINE、Twilio、Telegram、企业微信、GitHub 或 X，请参阅[直接连接服务](#直接连接服务)。Bluesky 和 Discord 的设置见[连接 Bluesky](#连接-bluesky)和[连接 Discord](#连接-discord)。支持自定义 Bearer 请求头的服务可以使用下面的通用 Webhook。
 
 如需使用通用 Webhook，请先在 Worker 的 Secret 中添加独立的随机令牌 `HOOK_TOKEN`。如需只读 MCP 连接器，再添加 `MCP_TOKEN`。每种用途应使用不同的令牌。
 
@@ -113,7 +119,7 @@ curl --fail-with-body "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
 
 ## 连接 Discord
 
-Worker 每五分钟检查一个 Discord 服务器文字频道。首次检查仅记录最新消息的位置，之后每次按时间顺序读取最多十条新消息。普通消息和回复会被转发到 Muse，内容包括作者、正文前 2,000 个字符，以及附件名称、大小和文件类型。
+Worker 每五分钟检查一个 Discord 服务器文字频道。首次检查仅记录最新消息的位置，之后每次按时间顺序读取最多十条新消息。普通消息和回复会被转发到 Muse，内容包括作者、正文前 2,000 个字符，以及附件名称、大小和文件类型。 对于转发的消息，通知还包含转发原文和附件信息。
 
 1. 在 Discord Developer Portal 创建应用，打开 **Bot**，启用 **Message Content Intent**。已验证的应用需要申请该权限。复制机器人令牌，在 Worker 中将其保存为 Secret `DISCORD_BOT_TOKEN`。[访问消息内容](https://docs.discord.com/developers/events/gateway#message-content-intent)
 2. 在 **Installation → Guild Install** 中选择 `bot` 权限范围，通过安装链接将机器人添加到服务器。在目标频道为机器人授予 **查看频道** 和 **读取消息历史记录** 权限。成员在该频道发布的消息将转发到所选 Muse 对话。[安装 Discord 应用](https://docs.discord.com/developers/resources/application#installation-context) · [频道消息权限](https://docs.discord.com/developers/resources/message#get-channel-messages)

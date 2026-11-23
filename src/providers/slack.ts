@@ -5,6 +5,7 @@ import { maxEventBytes, parseJson, verifyHmac, type ProviderDelivery } from '../
 import type { WorkerEnv } from '../webhook.ts'
 
 const envelope = z.object({ type: z.string().min(1) })
+const creationSubtypes = new Set([undefined, 'file_share', 'me_message', 'thread_broadcast', 'bot_message'])
 const verification = z.object({ challenge: z.string().min(1) })
 const entity = z.union([z.string(), z.object({ id: z.string(), name: z.string().optional() })])
 const eventCallback = z.object({
@@ -92,10 +93,12 @@ export async function slack(
   const messageKey = channel && ts && (event.type === 'message' || event.type === 'app_mention')
     ? JSON.stringify([team_id, channel, ts])
     : undefined
+  const creation = event.type === 'app_mention' || (event.type === 'message' && creationSubtypes.has(event.subtype))
   return {
     retractedMessageIds: deleted && messageKey ? [messageKey] : undefined,
     events: [{
       key: event_id,
+      coalesceKey: creation && team_id ? messageKey : undefined,
       messageId: deleted ? undefined : messageKey,
       type: event.type,
       text: summarize(parsed.data),

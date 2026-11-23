@@ -32,3 +32,27 @@ test('Telegram requires a configured webhook secret', async (t) => {
   const response = await fetch(new URL('/v1/hooks/telegram', worker.url), { method: 'POST' })
   assert.equal(response.status, 503)
 })
+
+test('a Telegram secret shared with a webhook or MCP role disables bearer-protected routes', async () => {
+  for (const role of ['HOOK_TOKEN', 'MCP_TOKEN', 'MCP_ADMIN_TOKEN', 'MCP_RECOVERY_TOKEN']) {
+    const worker = await startConfiguredWorker(undefined, {
+      [role]: secret,
+      TELEGRAM_WEBHOOK_SECRET: secret,
+    })
+    try {
+      for (const path of ['/v1/hooks/telegram', '/v1/hooks/custom', '/mcp', '/v1/setup/pairing']) {
+        const response = await fetch(new URL(path, worker.url), {
+          method: 'POST',
+          headers: path === '/v1/hooks/telegram'
+            ? { 'X-Telegram-Bot-Api-Secret-Token': secret }
+            : { Authorization: 'Bearer ' + secret },
+          body: JSON.stringify({ update_id: 1, ...update }),
+        })
+        assert.equal(response.status, 503, role + ' on ' + path)
+      }
+      assert.deepEqual(await worker.storedEvents(), [])
+    } finally {
+      await worker.close()
+    }
+  }
+})

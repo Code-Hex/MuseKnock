@@ -95,6 +95,10 @@ async def verify(socket, events, lookups):
     }
     if socket.request.path == "/lost-ack":
         return
+    if socket.request.path in ("/post-rate-limited", "/post-unavailable"):
+        status = 429 if socket.request.path == "/post-rate-limited" else 503
+        await vm.send_frame(ServiceFrame.response(frame.stream_id, ApplicationResponse(status=status)))
+        return
     if socket.request.path == "/post-reset":
         await vm.send_frame(ServiceFrame.response(frame.stream_id, ApplicationResponse(status=200, body=b"{}")))
         await vm.send_frame(ServiceFrame.reset(frame.stream_id, Reset(code=ResetCode.TIMEOUT)))
@@ -133,7 +137,7 @@ async def main():
 
     async with serve(handle, "127.0.0.1", 0, compression=None) as server:
         print(server.sockets[0].getsockname()[1], flush=True)
-        for _ in range(24):
+        for _ in range(26):
             error = await finished.get()
             if error:
                 raise error

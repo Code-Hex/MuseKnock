@@ -12,7 +12,8 @@
     "deploy": "wrangler deploy --minify",
     "check": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
     "test": "tsx --test tests/*.test.*",
-    "deploy:local": "wrangler deploy --minify --secrets-file .dev.vars"
+    "deploy:local": "wrangler deploy --minify --secrets-file .dev.vars",
+    "authorize": "tsx scripts/authorize.ts"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.17.0",
@@ -37,15 +38,6 @@
       },
       "CREDENTIAL_ENCRYPTION_KEY": {
         "description": "Generate a separate 32-byte random key (64 hexadecimal characters). Back it up in your password manager and reuse it on every deployment of this Worker."
-      },
-      "MUSE_NODE_ID": {
-        "description": "Initial setup. Enter the node ID of your authorized Muse device."
-      },
-      "MUSE_SDK_TOKEN": {
-        "description": "Initial setup. Enter the Gadget SDK token used when authorizing this device."
-      },
-      "MUSE_REFRESH_TOKEN": {
-        "description": "Initial setup. Enter the current refresh token for this device identity. Stop any executor sharing the identity before handoff."
       }
     }
   }
