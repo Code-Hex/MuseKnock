@@ -18,17 +18,18 @@ test('setup prepares only Worker secrets and preserves an existing side chat', a
         import.meta.resolve('tsx'),
         fileURLToPath(new URL('../scripts/setup.ts', import.meta.url)),
       ],
-      { cwd, encoding: 'utf8' },
+      { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     )
   const vars = join(cwd, '.dev.vars')
   const output = run()
   const contents = await readFile(vars, 'utf8')
   const config = parseEnv(contents)
-  for (const name of ['HOOK_TOKEN', 'MCP_TOKEN', 'MCP_ADMIN_TOKEN']) {
+  const secretNames = ['HOOK_TOKEN', 'MCP_TOKEN', 'MCP_ADMIN_TOKEN', 'CREDENTIAL_ENCRYPTION_KEY']
+  for (const name of secretNames) {
     assert.match(config[name]!, /^[a-f0-9]{64}$/)
     assert.ok(!output.includes(config[name]!))
   }
-  assert.equal(new Set([config.HOOK_TOKEN, config.MCP_TOKEN, config.MCP_ADMIN_TOKEN]).size, 3)
+  assert.equal(new Set(secretNames.map((name) => config[name])).size, 4)
   assert.equal(config.MUSE_REFRESH_TOKEN, '')
   assert.equal(config.MUSE_SESSION_ID, undefined)
   assert.equal(config.BRIDGE_TOKEN, undefined)
@@ -47,6 +48,18 @@ test('setup prepares only Worker secrets and preserves an existing side chat', a
   assert.equal(upgraded.HOOK_TOKEN, 'existing')
   assert.equal(upgraded.MUSE_SESSION_ID, 'existing-room')
   assert.equal(upgraded.MUSE_NODE_ID, '')
+  assert.match(upgraded.CREDENTIAL_ENCRYPTION_KEY!, /^[a-f0-9]{64}$/)
+
+  const publicToken = 'A'.repeat(64)
+  for (const key of ['not-hex', '1'.repeat(63), publicToken.toLowerCase()]) {
+    const invalid = 'HOOK_TOKEN=' + publicToken + '\nCREDENTIAL_ENCRYPTION_KEY=' + key + '\n'
+    await writeFile(vars, invalid)
+    assert.throws(run, /CREDENTIAL_ENCRYPTION_KEY/)
+    assert.equal(await readFile(vars, 'utf8'), invalid)
+  }
+  await writeFile(vars, 'CREDENTIAL_ENCRYPTION_KEY=\n')
+  run()
+  assert.match(parseEnv(await readFile(vars, 'utf8')).CREDENTIAL_ENCRYPTION_KEY!, /^[a-f0-9]{64}$/)
 })
 
 test('explicit imports take only device fields and leave unrelated configuration intact', async (t) => {

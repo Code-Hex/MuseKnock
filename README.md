@@ -10,16 +10,19 @@ MuseKnock delivers webhooks from Cloudflare Workers to an existing Muse side cha
 
 Have your Cloudflare and GitHub accounts, an authorized Muse device, and the exact session ID your gadget uses for the existing chat ready. The SDK token is for personal, non-commercial use with your own Muse account. [One-time device authorization](docs/operations.md#authorize-a-device) · [SDK token terms](https://gadgets.muse.ai/sdk-terms)
 
-**1. Deploy from Cloudflare.** Click **Deploy to Cloudflare** above. Choose a Worker name and fill in the six Worker secrets in the deployment form. Generate three different long random alphanumeric tokens in your password manager for the first three rows. [Cloudflare deploy buttons](https://developers.cloudflare.com/workers/platform/deploy-buttons/#worker-environment-variables-and-secrets)
+**1. Deploy from Cloudflare.** Click **Deploy to Cloudflare** above. Choose a Worker name and fill in the seven Worker secrets in the deployment form. Generate three different long random alphanumeric tokens in your password manager for the first three rows. [Cloudflare deploy buttons](https://developers.cloudflare.com/workers/platform/deploy-buttons/#worker-environment-variables-and-secrets)
 
 | Worker secret | Value |
 | --- | --- |
 | `HOOK_TOKEN` | Token for your webhook sender |
 | `MCP_TOKEN` | Token for a read-only Muse connector |
 | `MCP_ADMIN_TOKEN` | Token for the Muse connector that will configure and test delivery |
+| `CREDENTIAL_ENCRYPTION_KEY` | A separate 32-byte key for encrypting stored credentials. In your password manager, generate 64 random hexadecimal characters (0–9, a–f) and keep a private backup. |
 | `MUSE_NODE_ID` | Official `pairing.json`: `node_id`. Community `state.json`: `device.device_id`. |
 | `MUSE_REFRESH_TOKEN` | Official: `refresh_token`. Community: `device.refresh_token`. |
 | `MUSE_SDK_TOKEN` | The SDK token used for the official pairing, or `sdk_token` in community state. |
+
+Upgrading an existing Worker? Add this new secret before deploying the update, then ask Muse to check your setup. [Migrate stored credentials](docs/operations.md#migrate-stored-credentials)
 
 Stop any executor or SDK daemon that uses this device identity and disable its automatic restart before handing it over. The Worker will rotate the device credentials. Copy only the three named device values into Cloudflare. Keep the source file and account credentials private. Deploy the Worker and copy its HTTPS URL.
 

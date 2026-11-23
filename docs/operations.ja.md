@@ -26,6 +26,12 @@ Muse に「受付 ID … の配信状態を調べて」と頼みます。コネ�
 
 投稿前と確定できた失敗は、配信上限と有効期限の範囲で再試行します。すでに Muse に届いた可能性があれば `unknown` として保留します。受付応答が失われた際の二重投稿を防ぐためです。[Gadget SDK の投稿経路](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/link_client.py)
 
+## 保存済みの認証情報を移行する
+
+1. 既存の Worker を更新する前に、Cloudflare の **Settings → Variables and Secrets** で `CREDENTIAL_ENCRYPTION_KEY` を **Secret** として追加します。[デプロイ手順](../README.ja.md#クイックスタート)に従って生成した16進数64文字の専用鍵を使います。この Worker にすでに設定してある場合は同じ値を使い続けます。新規のローカルセットアップでは別の鍵が生成されるため、既存の Worker を `npm run deploy:local` で更新する場合は、先にその Worker の鍵を `.dev.vars` に復元してください。
+2. 更新版をデプロイし、認証済みの Muse コネクタから `get_setup_status` を呼び、`credentialStorageReady` が `true` であることを確認します。`false` の場合はシークレットの設定を確認し、鍵が変わっていれば控えから元の値を復元します。Durable Object の起動時に、保存済みの Muse の端末トークンと Bluesky のセッションが AES-256-GCM で暗号化されます。以後のトークン更新時にも暗号化されます。コピーされた認証レコードの復号には、Worker Secret に保存した鍵が必要です。再デプロイや復元に備えて鍵はパスワードマネージャーに保管してください。誤って別の鍵に置き換えたときは、元の値に戻すと保存済みトークンを再び読み取れます。
+3. 移行前のエクスポートやポイントインタイムリカバリの復元履歴には、平文のトークンが残る可能性があります。それらが漏えいした場合、該当する Muse 端末の認証を失効させ、新たに端末を認証してください。Bluesky のトークンが漏えいした場合は、該当するセッションとアプリパスワードを失効させ、アプリパスワードを再発行します。対応する Worker Secret を更新してから配信を再開します。[Cloudflare のストレージ復元機能](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#point-in-time-recovery-api)
+
 ## 端末認証を更新する
 
 移行後は Worker が更新した端末認証情報を Durable Object に保存します。この ID は他の executor、ローカル開発環境、別の Worker と共有しないでください。Muse がペアリングを失効させた場合は、改めて端末を認証し、Cloudflare の Worker シークレットに最新値を設定してデプロイします。投稿先の登録は Durable Object に残ります。
@@ -75,7 +81,7 @@ registerWebhook(app, 'ci', [
 
 | ツール | 引数 | 権限 |
 | --- | --- | --- |
-| `get_setup_status` | Worker 内の設定から `deviceConfigured`、`active`、`ready` を返します。 | 閲覧 |
+| `get_setup_status` | Worker 内の設定から `deviceConfigured`、`credentialStorageReady`、`active`、`ready` を返します。 | 閲覧 |
 | `send_test_notification` | `requestId`（UUID）。選択中の投稿先に固定文のテスト通知を登録し、受付 ID を返します。通知元は `museknock-test`、イベント種別は `test` です。 | 管理 |
 | `list_side_chats` | MuseKnock の登録名とセッション ID の一覧、選択中の投稿先を返します。 | 閲覧 |
 | `register_side_chat` | `name` と `sessionId` を登録・更新します。投稿先が未設定なら最初の登録を選びます。 | 管理 |
@@ -95,4 +101,4 @@ Muse Gadget SDK のコミット `e17081a45941415d483642dbe21c2a2e6ef85a13` を�
 
 ## CLI でセットアップする場合
 
-Node.js 22.12 以降で `npm ci`、`npm run setup -- --pairing /path/to/pairing.json` を実行します。コミュニティ版は代わりに `--device-state /path/to/state.json` を使います。生成された `.dev.vars` で端末の認証情報を補います。新規設定では投稿先は未選択です。デプロイ後に MCP から登録してください。旧環境の `.env.bridge` を含め、既存の `MUSE_SESSION_ID` は引き継ぎます。`npx wrangler login` の後に `npm run deploy:local` を実行すると、この設定をアップロードできます。検証には `npm test`、`npm run check`、`npm run deploy -- --dry-run` を使います。`npm run dev` で実際に投稿するときは別の端末 ID を使用してください。実際の Muse アカウントへの投稿は未検証です。
+Node.js 22.12 以降で `npm ci`、`npm run setup -- --pairing /path/to/pairing.json` を実行します。コミュニティ版は代わりに `--device-state /path/to/state.json` を使います。生成された `.dev.vars` で端末の認証情報を補います。新規の Worker では生成された `CREDENTIAL_ENCRYPTION_KEY` をパスワードマネージャーに保管します。既存の Worker をデプロイする場合は元の鍵を使ってください。新規設定では投稿先は未選択です。デプロイ後に MCP から登録してください。旧環境の `.env.bridge` を含め、既存の `MUSE_SESSION_ID` は引き継ぎます。`npx wrangler login` の後に `npm run deploy:local` を実行すると、この設定をアップロードできます。検証には `npm test`、`npm run check`、`npm run deploy -- --dry-run` を使います。`npm run dev` で実際に投稿するときは別の端末 ID を使用してください。実際の Muse アカウントへの投稿は未検証です。

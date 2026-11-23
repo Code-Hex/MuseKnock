@@ -1,10 +1,10 @@
 import { z } from 'zod'
-import type { Delivery } from './delivery.ts'
+import type { BatchResult, Delivery } from './delivery.ts'
 
 export type DiscordCheckpoint = { channelId: string; lastId?: string; retryAt?: number }
 type Enqueue = (
   events: (Pick<Delivery, 'type' | 'text'> & { key: string })[],
-) => Promise<'accepted' | 'limited' | 'noDestination'>
+) => Promise<BatchResult>
 type Transport = (url: URL, init: RequestInit) => Promise<Response>
 const snowflake = z.string().regex(/^[1-9]\d{0,19}$/)
 const message = z.object({

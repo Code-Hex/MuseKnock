@@ -10,16 +10,19 @@ MuseKnock は Cloudflare Workers で Webhook を受け取り、既存の Muse �
 
 Cloudflare と GitHub のアカウント、認証済みの Muse 端末情報、ガジェットが既存のチャットで使っているセッション ID を用意します。SDK トークンは自分の Muse アカウントでの個人・非商用利用が対象です。[初回の端末認証](docs/operations.ja.md#初回の端末認証)・[SDK トークンの利用条件](https://gadgets.muse.ai/sdk-terms)
 
-**1. Cloudflare からデプロイします。** 上の **Deploy to Cloudflare** を押し、Worker 名を選び、デプロイ画面の Worker シークレット欄に次の6項目を入力します。最初の3項目にはパスワードマネージャーで生成した、十分長いランダムな英数字をそれぞれ別に使います。[Cloudflare のデプロイボタンの仕様](https://developers.cloudflare.com/workers/platform/deploy-buttons/#worker-environment-variables-and-secrets)
+**1. Cloudflare からデプロイします。** 上の **Deploy to Cloudflare** を押し、Worker 名を選び、デプロイ画面の Worker シークレット欄に次の7項目を入力します。最初の3項目にはパスワードマネージャーで生成した、十分長いランダムな英数字をそれぞれ別に使います。[Cloudflare のデプロイボタンの仕様](https://developers.cloudflare.com/workers/platform/deploy-buttons/#worker-environment-variables-and-secrets)
 
 | シークレット | 設定する値 |
 | --- | --- |
 | `HOOK_TOKEN` | Webhook 送信元用のトークン |
 | `MCP_TOKEN` | Muse の閲覧用コネクタのトークン |
 | `MCP_ADMIN_TOKEN` | 投稿先の設定やテスト送信に使う Muse の管理用トークン |
+| `CREDENTIAL_ENCRYPTION_KEY` | 保存する認証情報を暗号化する32バイトの専用鍵。パスワードマネージャーで16進数（0〜9、a〜f）のランダムな64文字を生成し、控えを安全に保管します。 |
 | `MUSE_NODE_ID` | 公式の `pairing.json` なら `node_id`、コミュニティ版の `state.json` なら `device.device_id` |
 | `MUSE_REFRESH_TOKEN` | 公式なら `refresh_token`、コミュニティ版なら `device.refresh_token` |
 | `MUSE_SDK_TOKEN` | 公式ならペアリングに使った SDK トークン、コミュニティ版なら `sdk_token` |
+
+既存の Worker を更新する場合は、デプロイ前にこのシークレットを追加し、更新後に Muse で設定を確認してください。[保存済み認証情報の移行手順](docs/operations.ja.md#保存済みの認証情報を移行する)
 
 引き渡し後は Worker が端末の認証情報を更新します。同じ端末 ID を使う executor や SDK デーモンが稼働中なら、事前に停止して自動起動を解除します。Cloudflare に転記する端末情報は表の3項目だけです。元のファイルとアカウントの認証情報は手元で保管してください。Worker をデプロイしたら、表示された HTTPS URL をコピーします。
 

@@ -52,6 +52,8 @@ export function registerProvider(
       if (new TextEncoder().encode(text).length > 32 * 1024) return c.text('Event too large', 413)
     }
     const result = await inbox(c.env).enqueueBatch(source, events)
+    if (result === 'credentialStorageUnavailable')
+      return c.text('Credential storage is unavailable', 503)
     if (result === 'noDestination') return c.text('Register a destination side chat first', 503)
     if (result === 'limited')
       return c.text('Source rate limit reached', 429, { 'Retry-After': '60' })

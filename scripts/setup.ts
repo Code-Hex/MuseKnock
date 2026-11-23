@@ -126,7 +126,15 @@ async function setup() {
       MUSE_REFRESH_TOKEN: current.MUSE_REFRESH_TOKEN ?? '',
       ...imported,
     }
-    const contents = updateEnv(raw, changes)
+    const key = current.CREDENTIAL_ENCRYPTION_KEY || randomBytes(32).toString('hex')
+    if (key.length !== 64 || !/^[0-9a-f]{64}$/i.test(key))
+      throw new Error('CREDENTIAL_ENCRYPTION_KEY must contain exactly 64 hexadecimal characters.')
+    const reused = Object.entries({ ...current, ...changes }).some(
+      ([name, value]) =>
+        name !== 'CREDENTIAL_ENCRYPTION_KEY' && value?.toLowerCase() === key.toLowerCase(),
+    )
+    if (reused) throw new Error('Generate a separate key for CREDENTIAL_ENCRYPTION_KEY.')
+    const contents = updateEnv(raw, { ...changes, CREDENTIAL_ENCRYPTION_KEY: key })
     if (raw !== contents) {
       await writeFile(temp, contents, { flag: 'wx', mode: 0o600 })
       await rename(temp, filename)

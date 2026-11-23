@@ -26,6 +26,12 @@ Ask Muse to check the delivery status for the receipt ID. You can also repeat th
 
 A failure known to have occurred before submission can be retried within the delivery limits. If the post may already have reached Muse, the Worker records `unknown` and leaves the decision to you. This avoids duplicating a post when its acknowledgement is lost. [Gadget SDK chat transport](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/link_client.py)
 
+## Migrate stored credentials
+
+1. Before upgrading an existing Worker, open **Settings → Variables and Secrets** in Cloudflare. Set `CREDENTIAL_ENCRYPTION_KEY` as a **Secret** using the dedicated 64-character hexadecimal key from the [deployment instructions](../README.md#quick-start). If you already set it for this Worker, keep the same value. A fresh local setup generates its own key, so restore the deployed Worker's key in `.dev.vars` before using `npm run deploy:local` for that Worker.
+2. Deploy the update and call `get_setup_status` through your authenticated Muse connector. Confirm that `credentialStorageReady` is `true`. If it is `false`, check the secret and restore the original key from your backup. Starting the Durable Object migrates its existing Muse device tokens and any saved Bluesky session to AES-256-GCM ciphertext. The Worker also encrypts future token updates. Decrypting a copied credential record requires the separate Worker secret. Retain the key in your private password manager across deployments and restores. If you accidentally replace it, restore the original value to read the saved tokens.
+3. Earlier exports and point-in-time recovery snapshots can still contain the old plaintext. If one was exposed, revoke the affected Muse device authorization and authorize a fresh device. For exposed Bluesky tokens, revoke the affected sessions, revoke the app password, then issue a new one. Update the corresponding Worker secrets before resuming delivery. [Cloudflare storage recovery](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#point-in-time-recovery-api)
+
 ## Renew device authorization
 
 After handoff, the Worker saves rotated device credentials in its Durable Object. Keep other executors, local development environments, and Worker deployments off that identity. If Muse revokes the pairing, authorize a fresh device credential, update its Worker secrets in Cloudflare, and deploy the changes. Existing registrations remain in the Durable Object.
@@ -75,7 +81,7 @@ After redeploying, send notifications to `POST /hooks/ci`. To verify a source-sp
 
 | Tool | Arguments and result | Access |
 | --- | --- | --- |
-| `get_setup_status` | Returns `deviceConfigured`, `active`, and `ready` from local configuration. | Read |
+| `get_setup_status` | Returns `deviceConfigured`, `credentialStorageReady`, `active`, and `ready` from local configuration. | Read |
 | `send_test_notification` | `requestId` (UUID). Enqueues a fixed test notification for the active chat and returns its receipt. The source is `museknock-test` and the event type is `test`. | Admin |
 | `list_side_chats` | Lists locally registered names and session IDs, and identifies the active destination. | Read |
 | `register_side_chat` | `name`, `sessionId`. Creates or updates the registration. The first chat becomes active when no destination is configured. | Admin |
@@ -95,4 +101,4 @@ With the Muse Gadget SDK checked out at `e17081a45941415d483642dbe21c2a2e6ef85a1
 
 ## Optional CLI setup
 
-With Node.js 22.12 or later, run `npm ci` and `npm run setup -- --pairing /path/to/pairing.json`. For community sign-in use `--device-state /path/to/state.json` instead. Edit the generated `.dev.vars` to complete the device credentials. A fresh configuration leaves the chat unselected. Register it through MCP after deployment. An existing `MUSE_SESSION_ID`, including one from a previous `.env.bridge`, is preserved. Run `npx wrangler login`, then `npm run deploy:local` to upload the settings. Use `npm test`, `npm run check`, and `npm run deploy -- --dry-run` for local verification. Use separate device credentials for live `npm run dev` sessions. Delivery to a live Muse account has not been verified.
+With Node.js 22.12 or later, run `npm ci` and `npm run setup -- --pairing /path/to/pairing.json`. For community sign-in use `--device-state /path/to/state.json` instead. Complete the device credentials in the generated `.dev.vars`. For a new Worker, back up its generated `CREDENTIAL_ENCRYPTION_KEY` in your password manager. For an existing Worker, use its original key before deploying. A fresh configuration leaves the chat unselected. Register it through MCP after deployment. An existing `MUSE_SESSION_ID`, including one from a previous `.env.bridge`, is preserved. Run `npx wrangler login`, then `npm run deploy:local` to upload the settings. Use `npm test`, `npm run check`, and `npm run deploy -- --dry-run` for local verification. Use separate device credentials for live `npm run dev` sessions. Delivery to a live Muse account has not been verified.

@@ -56,7 +56,7 @@ export async function handleMcp(
     'get_setup_status',
     {
       description:
-        'Check whether the Worker has device credentials in the expected format and an active destination. Ready means a test can be queued. This check makes no request to Muse.',
+        'Check whether the Worker has device credentials in the expected format, can open encrypted credential storage, and has an active destination. Ready means a test can be queued. This check makes no request to Muse.',
       annotations: readOnly,
     },
     async () => result(await inbox.getSetupStatus()),
@@ -117,6 +117,8 @@ export async function handleMcp(
       },
       async ({ requestId }) => {
         const receipt = await inbox.sendTestNotification(requestId)
+        if ('credentialStorageUnavailable' in receipt)
+          return failure('Check CREDENTIAL_ENCRYPTION_KEY and saved credentials in the Worker deployment.')
         if ('missingDevice' in receipt)
           return failure('Configure valid Muse device credentials in the Worker secrets first.')
         if ('noDestination' in receipt)

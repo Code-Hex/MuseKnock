@@ -26,6 +26,12 @@
 
 如果能确定提交前已经失败，Worker 会在投递限额和有效期内重试。如果消息可能已到达 Muse，Worker 会记录为 `unknown`，由你决定是否重发，以免因确认响应丢失而重复投递。[Gadget SDK 消息传输协议](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/link_client.py)
 
+## 迁移已保存的凭据
+
+1. 升级现有 Worker 前，在 Cloudflare 的 **Settings → Variables and Secrets** 中将 `CREDENTIAL_ENCRYPTION_KEY` 添加为 **Secret**。按[部署步骤](../README.zh-CN.md#快速开始)生成 64 个十六进制字符作为专用密钥。如果该 Worker 已设置密钥，请保留原值。全新本地配置会生成自己的密钥。用 `npm run deploy:local` 更新已有 Worker 前，请先将该 Worker 的原密钥恢复到 `.dev.vars`。
+2. 部署更新后，通过已认证的 Muse 连接器调用 `get_setup_status`，确认 `credentialStorageReady` 为 `true`。如果为 `false`，请检查 Secret 配置，如果密钥已更改则从备份中恢复原值。Durable Object 启动时会用 AES-256-GCM 加密已保存的 Muse 设备令牌和 Bluesky 会话。后续令牌更新也会加密。解密复制的凭据记录需要保存在 Worker Secret 中的独立密钥。请在私人密码管理器中保管密钥，以便重新部署或恢复。如果误换了密钥，恢复原值即可重新读取已保存的令牌。
+3. 迁移前的导出文件和时间点恢复快照中可能仍有明文令牌。若这些数据已经泄露，请撤销受影响的 Muse 设备授权并重新授权设备。如果 Bluesky 令牌泄露，请撤销受影响的会话及应用密码，再签发新的应用密码。更新对应的 Worker Secret 后恢复投递。[Cloudflare 存储恢复机制](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#point-in-time-recovery-api)
+
 ## 更新设备授权
 
 交接后，Worker 会将轮换后的设备凭据保存在 Durable Object 中。请勿在其他执行器、本地开发环境或其他 Worker 部署中使用同一设备身份。如果 Muse 撤销了配对，请重新授权设备凭据，在 Cloudflare 中更新相应的 Worker 密钥并重新部署。已注册的目标对话保存在 Durable Object 中。
@@ -75,7 +81,7 @@ registerWebhook(app, 'ci', [
 
 | 工具 | 参数与结果 | 权限 |
 | --- | --- | --- |
-| `get_setup_status` | 根据 Worker 中的配置返回 `deviceConfigured`、`active` 和 `ready`。 | 只读 |
+| `get_setup_status` | 根据 Worker 中的配置返回 `deviceConfigured`、`credentialStorageReady`、`active` 和 `ready`。 | 只读 |
 | `send_test_notification` | `requestId`（UUID）。向当前目标对话排入一条固定内容的测试通知，返回回执。来源为 `museknock-test`，事件类型为 `test`。 | 管理 |
 | `list_side_chats` | 列出在 MuseKnock 中注册的名称、会话 ID 和当前目标。 | 只读 |
 | `register_side_chat` | 用 `name`、`sessionId` 新建或更新记录。尚无投递目标时自动选中首次注册的对话。 | 管理 |
@@ -95,4 +101,4 @@ registerWebhook(app, 'ci', [
 
 ## 可选的 CLI 配置
 
-在 Node.js 22.12 或更高版本中，运行 `npm ci` 和 `npm run setup -- --pairing /path/to/pairing.json`。使用社区登录状态时将参数换为 `--device-state /path/to/state.json`。编辑生成的 `.dev.vars`，补全设备凭据。新配置不会预选目标对话。部署后请通过 MCP 注册。已有的 `MUSE_SESSION_ID` 会予以保留，包括旧版 `.env.bridge` 中的设置。运行 `npx wrangler login` 后，用 `npm run deploy:local` 上传设置。使用 `npm test`、`npm run check` 和 `npm run deploy -- --dry-run` 进行本地验证。在 `npm run dev` 中发送真实消息时，请使用单独的设备凭据。尚未验证向真实 Muse 账户投递。
+在 Node.js 22.12 或更高版本中，运行 `npm ci` 和 `npm run setup -- --pairing /path/to/pairing.json`。使用社区登录状态时将参数换为 `--device-state /path/to/state.json`。编辑生成的 `.dev.vars`，补全设备凭据。对于新 Worker，请将生成的 `CREDENTIAL_ENCRYPTION_KEY` 备份到密码管理器中。部署已有 Worker 时，请使用原密钥。新配置不会预选目标对话。部署后请通过 MCP 注册。已有的 `MUSE_SESSION_ID` 会予以保留，包括旧版 `.env.bridge` 中的设置。运行 `npx wrangler login` 后，用 `npm run deploy:local` 上传设置。使用 `npm test`、`npm run check` 和 `npm run deploy -- --dry-run` 进行本地验证。在 `npm run dev` 中发送真实消息时，请使用单独的设备凭据。尚未验证向真实 Muse 账户投递。

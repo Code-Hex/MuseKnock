@@ -5,6 +5,7 @@ import {
   type BlueskyCheckpoint,
   type BlueskyEnqueue,
 } from './bluesky.ts'
+import type { CredentialStore } from './credential-store.ts'
 import { identifier as eventType } from './identifiers.ts'
 
 const origin = 'https://bsky.social/xrpc/'
@@ -20,9 +21,9 @@ const credentials = z.object({
   refreshJwt: token,
 })
 type Session = z.infer<typeof credentials>
-type Store = {
-  get<T>(key: string): Promise<T | undefined>
-  put<T>(key: string, value: T): Promise<void>
+type CheckpointStore = {
+  get<T>(key: typeof checkpointKey): Promise<T | undefined>
+  put(key: typeof checkpointKey, value: BlueskyCheckpoint): Promise<void>
 }
 type Transport = (url: URL, init: RequestInit) => Promise<Response>
 
@@ -56,17 +57,18 @@ async function invalidToken(response: Response) {
 export async function pollBlueskyNotifications(
   identifier: string,
   password: string,
-  storage: Store,
+  storage: CheckpointStore,
+  credentialsStore: CredentialStore,
   enqueue: BlueskyEnqueue,
   transport: Transport = fetch,
 ) {
   const fingerprint = await blueskyKey(JSON.stringify([identifier, password]))
-  const stored = await storage.get<{ fingerprint: string; session: Session }>(sessionKey)
+  const stored = await credentialsStore.get(sessionKey)
   async function save(response: Response): Promise<Session> {
     if (!response.ok)
       throw new Error('Bluesky authentication failed (HTTP ' + response.status + ')')
     const session = credentials.parse(await response.json())
-    await storage.put(sessionKey, { fingerprint, session })
+    await credentialsStore.put(sessionKey, { fingerprint, session })
     return session
   }
   async function login() {

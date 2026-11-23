@@ -10,16 +10,19 @@ MuseKnock 通过 Cloudflare Workers 把 Webhook 通知发送到已有的 Muse �
 
 请准备 Cloudflare 和 GitHub 账户、已获授权的 Muse 设备凭据，以及设备向现有对话发消息时使用的确切会话 ID。SDK 令牌仅供你在自己的 Muse 账户中用于个人、非商业用途。[首次授权设备](docs/operations.zh-CN.md#首次授权设备) · [SDK 令牌使用条款](https://gadgets.muse.ai/sdk-terms)
 
-**1. 从 Cloudflare 部署。** 点击上方的 **Deploy to Cloudflare**，选择 Worker 名称，在部署表单的 Worker 密钥栏填写以下六项。在密码管理器中为前三项分别生成足够长的随机字母数字串。[Cloudflare 部署按钮说明](https://developers.cloudflare.com/workers/platform/deploy-buttons/#worker-environment-variables-and-secrets)
+**1. 从 Cloudflare 部署。** 点击上方的 **Deploy to Cloudflare**，选择 Worker 名称，在部署表单的 Worker 密钥栏填写以下七项。在密码管理器中为前三项分别生成足够长的随机字母数字串。[Cloudflare 部署按钮说明](https://developers.cloudflare.com/workers/platform/deploy-buttons/#worker-environment-variables-and-secrets)
 
 | Worker 密钥 | 值 |
 | --- | --- |
 | `HOOK_TOKEN` | Webhook 发送端使用的令牌 |
 | `MCP_TOKEN` | Muse 只读连接器使用的令牌 |
 | `MCP_ADMIN_TOKEN` | Muse 管理连接器使用的令牌，可配置目标对话和发送测试通知 |
+| `CREDENTIAL_ENCRYPTION_KEY` | 用于加密凭据的独立 32 字节密钥。在密码管理器中随机生成 64 个十六进制字符（0–9、a–f），并妥善备份。 |
 | `MUSE_NODE_ID` | 官方 `pairing.json` 中的 `node_id`，或社区版 `state.json` 中的 `device.device_id` |
 | `MUSE_REFRESH_TOKEN` | 官方文件中的 `refresh_token`，或社区版文件中的 `device.refresh_token` |
 | `MUSE_SDK_TOKEN` | 官方设备配对时使用的 SDK 令牌，或社区版文件中的 `sdk_token` |
+
+升级现有 Worker 时，请先添加该密钥，再部署更新并通过 Muse 检查配置。[迁移已保存的凭据](docs/operations.zh-CN.md#迁移已保存的凭据)
 
 如果已有执行器或 SDK 守护进程使用相同的设备身份，请先将其停止并关闭自动重启。移交后 Worker 会刷新设备凭据。只将表中指定的三项设备信息复制到 Cloudflare，原始文件和账户凭据应保留在你自己手中。部署 Worker，复制部署完成后显示的 HTTPS 地址。
 

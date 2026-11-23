@@ -129,6 +129,7 @@ test('an admin registers and switches webhook destinations without a deployment 
 
   const setup = () => reader.callTool({ name: 'get_setup_status' })
   assert.deepEqual((await setup()).structuredContent, {
+    credentialStorageReady: true,
     deviceConfigured: true,
     active: null,
     ready: false,
@@ -157,6 +158,7 @@ test('an admin registers and switches webhook destinations without a deployment 
     })
   }
   assert.deepEqual((await setup()).structuredContent, {
+    credentialStorageReady: true,
     deviceConfigured: true,
     active: first.name,
     ready: true,
@@ -214,6 +216,7 @@ test('MCP setup checks disclose no device secrets and never send an implicit tes
   const admin = await connect(url, 'MCP_ADMIN_TOKEN-test')
   t.after(() => admin.close())
   assert.deepEqual((await admin.callTool({ name: 'get_setup_status' })).structuredContent, {
+    credentialStorageReady: true,
     deviceConfigured: false,
     active: 'default',
     ready: false,
@@ -264,4 +267,39 @@ test('a shared webhook or read-only credential cannot authorize MCP administrati
     })
     assert.equal(response.status, 503)
   }
+})
+
+test('credential storage must be available before accepting deliveries or refreshing tokens', async (t) => {
+  const calls: string[] = []
+  for (const key of ['', 'a'.repeat(64)]) {
+    const worker = await startWorker(
+      (req) => {
+        calls.push(req.url)
+        throw new Error('Unexpected outbound request')
+      },
+      { CREDENTIAL_ENCRYPTION_KEY: key, HOOK_TOKEN: 'A'.repeat(64) },
+    )
+    t.after(() => worker.close())
+    const admin = await connect(new URL('/mcp', worker.url), 'MCP_ADMIN_TOKEN-test')
+    t.after(() => admin.close())
+    const status = (await admin.callTool({ name: 'get_setup_status' })).structuredContent
+    assert.deepEqual(status, {
+      deviceConfigured: true,
+      active: 'default',
+      credentialStorageReady: false,
+      ready: false,
+    })
+    const test = await admin.callTool({
+      name: 'send_test_notification',
+      arguments: { requestId: crypto.randomUUID() },
+    })
+    assert.equal(test.isError, true)
+    const response = await fetch(new URL('/hooks/default', worker.url), {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + 'A'.repeat(64) },
+      body: 'test',
+    })
+    assert.equal(response.status, 503)
+  }
+  assert.deepEqual(calls, [])
 })

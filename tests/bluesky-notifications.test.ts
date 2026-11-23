@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { serialize } from 'node:v8'
 import { Response as WorkerResponse } from 'miniflare'
 import { startWorker } from './worker.ts'
 import { connect } from './mcp-client.ts'
+import { CredentialStore } from '../src/credential-store.ts'
 import { pollBlueskyNotifications } from '../src/bluesky-notifications.ts'
 import type { BlueskyEnqueue } from '../src/bluesky.ts'
 
@@ -68,8 +70,9 @@ const none: BlueskyEnqueue = async () => assert.fail('unexpected notification')
 
 test('Bluesky reads personal notifications with a reusable session and keeps read state untouched', async () => {
   const storage = store()
+  const credentialsStore = new CredentialStore(storage, 'ad'.repeat(32))
   const first = server([create, null, session(1)], [list, 'access-1', page(event(1))])
-  await pollBlueskyNotifications(account, password, storage, none, first.request)
+  await pollBlueskyNotifications(account, password, storage, credentialsStore, none, first.request)
   first.complete()
   const second = server([list, 'access-1', page(event(2), event(1))])
   let texts: string[] = []
@@ -77,6 +80,7 @@ test('Bluesky reads personal notifications with a reusable session and keeps rea
     account,
     password,
     storage,
+    credentialsStore,
     async (events) => {
       texts = events.map((event) => event.text)
       assert.equal(events[0].type, 'mention')
@@ -89,15 +93,19 @@ test('Bluesky reads personal notifications with a reusable session and keeps rea
   assert.match(texts[0], /post 2/)
   assert.doesNotMatch(texts[0], /extra|not for chat|app-password-test|access-1|refresh-1/)
   const third = server([list, 'access-1', page(event(2), event(1))])
-  await pollBlueskyNotifications(account, password, storage, none, third.request)
-  assert.ok(!JSON.stringify([...storage.saved.values()]).includes(password))
+  await pollBlueskyNotifications(account, password, storage, credentialsStore, none, third.request)
+  assert.doesNotMatch(
+    serialize(storage.saved).toString('latin1'),
+    /app-password-test|access-1|refresh-1/,
+  )
 })
 
 test('Bluesky refreshes expired tokens, saves rotations and signs in again only for invalid refresh credentials', async () => {
   const storage = store()
+  const credentialsStore = new CredentialStore(storage, 'ad'.repeat(32))
   const run = async (...calls: Parameters<typeof server>) => {
     const api = server(...calls)
-    await pollBlueskyNotifications(account, password, storage, none, api.request)
+    await pollBlueskyNotifications(account, password, storage, credentialsStore, none, api.request)
     api.complete()
   }
   await run([create, null, session(1)], [list, 'access-1', page(event(1))])
@@ -106,6 +114,7 @@ test('Bluesky refreshes expired tokens, saves rotations and signs in again only 
     [refresh, 'refresh-1', session(2)],
     [list, 'access-2', page(event(1))],
   )
+  assert.doesNotMatch(serialize(storage.saved).toString('latin1'), /access-2|refresh-2/)
   await assert.rejects(
     run([list, 'access-2', expired()], [refresh, 'refresh-2', new Response(null, { status: 503 })]),
     /503/,
@@ -126,6 +135,7 @@ test('Bluesky refreshes expired tokens, saves rotations and signs in again only 
     'other.bsky.social',
     'new-app-password',
     storage,
+    credentialsStore,
     none,
     rotated.request,
   )

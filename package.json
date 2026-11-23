@@ -41,6 +41,9 @@
       "MCP_ADMIN_TOKEN": {
         "description": "Generate a separate random token for your admin Muse connector. Save it for the Bearer token field in Muse."
       },
+      "CREDENTIAL_ENCRYPTION_KEY": {
+        "description": "Generate a separate 32-byte random key (64 hexadecimal characters). Back it up in your password manager and reuse it on every deployment of this Worker."
+      },
       "MUSE_NODE_ID": {
         "description": "Enter the node ID of your authorized Muse device."
       },

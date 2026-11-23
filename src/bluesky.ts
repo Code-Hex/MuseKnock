@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { Delivery } from './delivery.ts'
+import type { BatchResult, Delivery } from './delivery.ts'
 
 type Marker = { key: string | null; indexedAt: number }
 export type BlueskyCheckpoint = {
@@ -9,7 +9,7 @@ export type BlueskyCheckpoint = {
 }
 type Event = Pick<Delivery, 'type' | 'text'> & { key: string }
 export type BlueskyItem = Event & { indexedAt: number }
-export type BlueskyEnqueue = (events: Event[]) => Promise<'accepted' | 'limited' | 'noDestination'>
+export type BlueskyEnqueue = (events: Event[]) => Promise<BatchResult>
 type Page = { items: BlueskyItem[]; cursor?: string } | { restart: true }
 
 export async function blueskyKey(value: string) {

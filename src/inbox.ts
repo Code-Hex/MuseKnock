@@ -1,14 +1,16 @@
 import { DurableObject } from 'cloudflare:workers'
 import { pollBluesky, type BlueskyCheckpoint } from './bluesky.ts'
 import { pollBlueskyNotifications } from './bluesky-notifications.ts'
+import { CredentialStore, CredentialStoreError } from './credential-store.ts'
 import { pollDiscord, type DiscordCheckpoint } from './discord.ts'
 import { sendSideChat } from './link/chat.ts'
-import { getMuseVm, type DeviceCredentials } from './muse-account.ts'
+import { getMuseVm } from './muse-account.ts'
 import { museDeviceSchema, sideChatId, type MuseDevice } from './muse-device.ts'
 import { DeliveryQueue, type HookEvent } from './store.ts'
-import type { Outcome } from './delivery.ts'
+import type { BatchResult, Outcome } from './delivery.ts'
 
 export type MuseBindings = {
+  CREDENTIAL_ENCRYPTION_KEY?: string
   MUSE_NODE_ID: string
   MUSE_SDK_TOKEN: string
   MUSE_REFRESH_TOKEN: string
@@ -35,23 +37,45 @@ const retryDelay = 60_000
 
 export class Inbox extends DurableObject<MuseBindings> {
   private readonly queue: DeliveryQueue
+  private readonly credentials: CredentialStore
+  private credentialStorageReady = false
   private activePoll?: Promise<void>
 
   constructor(ctx: DurableObjectState, env: MuseBindings) {
     super(ctx, env)
+    const secret = env.CREDENTIAL_ENCRYPTION_KEY
+    const reused =
+      secret &&
+      Object.entries(env).some(
+        ([name, value]) =>
+          name !== 'CREDENTIAL_ENCRYPTION_KEY' &&
+          typeof value === 'string' &&
+          value.toLowerCase() === secret.toLowerCase(),
+      )
+    this.credentials = new CredentialStore(ctx.storage, reused ? undefined : secret)
     const session = env.MUSE_SESSION_ID
     this.queue = new DeliveryQueue(
       ctx.storage,
       session && sideChatId.test(session) ? session : null,
     )
-    // A deployment can inherit queued events from the former polling bridge.
     ctx.blockConcurrencyWhile(async () => {
+      try {
+        await this.credentials.migrate()
+        this.credentialStorageReady = true
+      } catch (error) {
+        if (!(error instanceof CredentialStoreError)) throw error
+        console.warn(
+          'Credential storage unavailable. Check CREDENTIAL_ENCRYPTION_KEY and saved credentials.',
+        )
+        return
+      }
       const next = this.queue.nextWakeAt()
       if (next !== null && (await ctx.storage.getAlarm()) === null) await ctx.storage.setAlarm(next)
     })
   }
 
   async enqueue(event: HookEvent) {
+    if (!this.credentialStorageReady) return { credentialStorageUnavailable: true } as const
     const receipt = this.queue.enqueue(event)
     if (
       'state' in receipt &&
@@ -63,9 +87,10 @@ export class Inbox extends DurableObject<MuseBindings> {
     return receipt
   }
 
-  async enqueueBatch(source: string, events: Omit<HookEvent, 'source'>[]) {
+  async enqueueBatch(source: string, events: Omit<HookEvent, 'source'>[]): Promise<BatchResult> {
     for (const event of events) {
       const receipt = await this.enqueue({ ...event, source })
+      if ('credentialStorageUnavailable' in receipt) return 'credentialStorageUnavailable'
       if ('noDestination' in receipt) return 'noDestination'
       if ('limited' in receipt) return 'limited'
     }
@@ -109,8 +134,12 @@ export class Inbox extends DurableObject<MuseBindings> {
     const { BLUESKY_IDENTIFIER: identifier, BLUESKY_APP_PASSWORD: password } = this.env
     if (!identifier || !password)
       throw new Error('Configure BLUESKY_IDENTIFIER and BLUESKY_APP_PASSWORD')
-    await pollBlueskyNotifications(identifier, password, this.ctx.storage, (events) =>
-      this.enqueueBatch('bluesky-notifications', events),
+    await pollBlueskyNotifications(
+      identifier,
+      password,
+      this.ctx.storage,
+      this.credentials,
+      (events) => this.enqueueBatch('bluesky-notifications', events),
     )
   }
 
@@ -123,6 +152,7 @@ export class Inbox extends DurableObject<MuseBindings> {
   }
 
   async alarm() {
+    if (!this.credentialStorageReady) return
     const storage = this.ctx.storage
     const next = this.queue.nextWakeAt()
     if (next === null) return
@@ -150,20 +180,17 @@ export class Inbox extends DurableObject<MuseBindings> {
   }
 
   private async deliverNext(device: MuseDevice): Promise<Outcome | null> {
-    const storage = this.ctx.storage
     // A new bootstrap secret must take precedence over a previous pairing's rotated token.
     const seed = new TextEncoder().encode(JSON.stringify([device.nodeId, device.refreshToken]))
     const hash = await crypto.subtle.digest('SHA-256', seed)
     const fingerprint = Array.from(new Uint8Array(hash), (byte) =>
       byte.toString(16).padStart(2, '0'),
     ).join('')
-    const saved = await storage.get<{ fingerprint: string; credentials: DeviceCredentials }>(
-      'device',
-    )
+    const saved = await this.credentials.get('device')
     const vm = await getMuseVm(
       device,
       saved?.fingerprint === fingerprint ? saved.credentials : undefined,
-      (credentials) => storage.put('device', { fingerprint, credentials }),
+      (credentials) => this.credentials.put('device', { fingerprint, credentials }),
     )
 
     // Claim after VM discovery so a source paused during authorization stays suppressed.
@@ -185,7 +212,12 @@ export class Inbox extends DurableObject<MuseBindings> {
   getSetupStatus() {
     const deviceConfigured = museDevice(this.env) !== null
     const { active } = this.queue.listSideChats()
-    return { deviceConfigured, active, ready: deviceConfigured && active !== null }
+    return {
+      deviceConfigured,
+      credentialStorageReady: this.credentialStorageReady,
+      active,
+      ready: deviceConfigured && this.credentialStorageReady && active !== null,
+    }
   }
 
   async sendTestNotification(requestId: string) {

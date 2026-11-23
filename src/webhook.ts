@@ -62,6 +62,8 @@ export function registerWebhook(
     if (!text.trim()) return c.text('Empty event', 400)
     if (new TextEncoder().encode(text).length > 32 * 1024) return c.text('Event too large', 413)
     const receipt = await inbox(c.env).enqueue({ source, key, type, text })
+    if ('credentialStorageUnavailable' in receipt)
+      return c.text('Credential storage is unavailable', 503)
     if ('noDestination' in receipt) return c.text('Register a destination side chat first', 503)
     if ('limited' in receipt) {
       c.header('Retry-After', '60')
