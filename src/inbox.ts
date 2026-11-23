@@ -3,25 +3,34 @@ import { pollBluesky, type BlueskyCheckpoint } from './bluesky.ts'
 import { pollBlueskyNotifications } from './bluesky-notifications.ts'
 import { CredentialStore, CredentialStoreError } from './credential-store.ts'
 import { pollDiscord, type DiscordCheckpoint } from './discord.ts'
+import {
+  GmailSyncError,
+  gmailConfigured,
+  syncGmail,
+  type GmailBindings,
+  type GmailWatchState,
+} from './gmail-watch.ts'
+import { gmailPushConfigured, type GmailPushBindings } from './providers/gmail.ts'
 import { sendSideChat } from './link/chat.ts'
 import { getMuseVm } from './muse-account.ts'
 import { museDeviceSchema, sideChatId, type MuseDevice } from './muse-device.ts'
 import { DeliveryQueue, type HookEvent } from './store.ts'
 import type { BatchResult, Outcome } from './delivery.ts'
 
-export type MuseBindings = {
-  CREDENTIAL_ENCRYPTION_KEY?: string
-  MUSE_NODE_ID: string
-  MUSE_SDK_TOKEN: string
-  MUSE_REFRESH_TOKEN: string
-  MUSE_SESSION_ID?: string
-  MUSE_VM_ID?: string
-  DISCORD_CHANNEL_ID?: string
-  DISCORD_BOT_TOKEN?: string
-  BLUESKY_DID?: string
-  BLUESKY_IDENTIFIER?: string
-  BLUESKY_APP_PASSWORD?: string
-}
+export type MuseBindings = GmailBindings &
+  GmailPushBindings & {
+    CREDENTIAL_ENCRYPTION_KEY?: string
+    MUSE_NODE_ID: string
+    MUSE_SDK_TOKEN: string
+    MUSE_REFRESH_TOKEN: string
+    MUSE_SESSION_ID?: string
+    MUSE_VM_ID?: string
+    DISCORD_CHANNEL_ID?: string
+    DISCORD_BOT_TOKEN?: string
+    BLUESKY_DID?: string
+    BLUESKY_IDENTIFIER?: string
+    BLUESKY_APP_PASSWORD?: string
+  }
 
 export function museDevice(env: MuseBindings) {
   const device = museDeviceSchema.safeParse({
@@ -34,11 +43,15 @@ export function museDevice(env: MuseBindings) {
 }
 
 const retryDelay = 60_000
+const gmailStateKey = 'gmail-watch'
+
+type GmailSyncResult = { ok: true } | { ok: false; error: string }
 
 export class Inbox extends DurableObject<MuseBindings> {
   private readonly queue: DeliveryQueue
   private readonly credentials: CredentialStore
   private credentialStorageReady = false
+  private activeGmailSync?: Promise<GmailSyncResult>
   private activePoll?: Promise<void>
 
   constructor(ctx: DurableObjectState, env: MuseBindings) {
@@ -99,7 +112,6 @@ export class Inbox extends DurableObject<MuseBindings> {
 
   async pollSources() {
     if (!this.getSetupStatus().ready) return
-    // Scheduled invocations can overlap while the first one is waiting on the Bluesky API.
     this.activePoll ??= this.pollConfiguredSources().finally(() => {
       this.activePoll = undefined
     })
@@ -115,8 +127,73 @@ export class Inbox extends DurableObject<MuseBindings> {
     if (this.env.DISCORD_CHANNEL_ID || this.env.DISCORD_BOT_TOKEN) {
       polls.push(this.pollDiscordChannel())
     }
+    if (this.env.GMAIL_ACCOUNT) {
+      polls.push(
+        this.syncGmail().then((result) => {
+          if (!result.ok) throw new Error(result.error)
+        }),
+      )
+    }
     for (const outcome of await Promise.allSettled(polls)) {
       if (outcome.status === 'rejected') throw outcome.reason
+    }
+  }
+
+  async getGmailStatus() {
+    const configured = gmailConfigured(this.env) && gmailPushConfigured(this.env)
+    const saved = await this.ctx.storage.get<GmailWatchState>(gmailStateKey)
+    const state =
+      saved &&
+      saved.account.toLowerCase() === this.env.GMAIL_ACCOUNT?.toLowerCase() &&
+      saved.topic === this.env.GMAIL_TOPIC &&
+      saved.labelId === (this.env.GMAIL_LABEL_ID?.trim() ?? 'INBOX')
+        ? saved
+        : undefined
+    const isoTime = (ms?: number) => (ms === undefined ? null : new Date(ms).toISOString())
+    return {
+      configured,
+      ready: configured && this.getSetupStatus().ready,
+      historyId: state?.historyId ?? null,
+      watchExpiresAt: isoTime(state?.watchExpiresAt),
+      watchRenewedAt: isoTime(state?.watchRenewedAt),
+      lastSyncAt: isoTime(state?.lastSyncAt),
+      lastGapAt: isoTime(state?.lastGapAt),
+    }
+  }
+
+  async syncGmail(): Promise<GmailSyncResult> {
+    this.activeGmailSync ??= this.synchronizeMailbox().finally(() => {
+      this.activeGmailSync = undefined
+    })
+    return this.activeGmailSync
+  }
+
+  private async synchronizeMailbox(): Promise<GmailSyncResult> {
+    if (!gmailConfigured(this.env) || !gmailPushConfigured(this.env)) {
+      return { ok: false, error: 'Check the Gmail OAuth, topic, subscription, and push settings.' }
+    }
+    if (!this.getSetupStatus().ready) {
+      return {
+        ok: false,
+        error: 'Configure Muse device credentials and an active side chat first.',
+      }
+    }
+    try {
+      await syncGmail(
+        this.env,
+        await this.ctx.storage.get<GmailWatchState>(gmailStateKey),
+        (state) => this.ctx.storage.put(gmailStateKey, state),
+        (events) => this.enqueueBatch('gmail', events),
+      )
+      return { ok: true }
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof GmailSyncError
+            ? error.message
+            : 'Gmail synchronization failed. Retry later.',
+      }
     }
   }
 
