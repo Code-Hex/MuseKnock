@@ -1,8 +1,6 @@
-import { DurableObject } from 'cloudflare:workers'
-
 import type { Claim, Delivery, Outcome } from './delivery.ts'
 
-type HookEvent = Omit<Delivery, 'id'> & { key: string }
+export type HookEvent = Omit<Delivery, 'id'> & { key: string }
 type State = 'queued' | 'sending' | 'sent' | 'unknown' | 'suppressed' | 'expired'
 type Receipt = { id: string; state: State; duplicate: boolean } | { limited: true }
 type Status = Omit<Delivery, 'text'> & { state: State; createdAt: number }
@@ -27,12 +25,11 @@ function decodeRule(row: RuleRow): Rule {
   return { source: row.source, paused: row.paused === 1, types: JSON.parse(row.types) }
 }
 
-export class Inbox extends DurableObject<unknown> {
+export class DeliveryQueue {
   private readonly sql: SqlStorage
 
-  constructor(ctx: DurableObjectState, env: unknown) {
-    super(ctx, env)
-    this.sql = ctx.storage.sql
+  constructor(private readonly storage: DurableObjectStorage) {
+    this.sql = storage.sql
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS events (
         id TEXT NOT NULL PRIMARY KEY,
@@ -60,7 +57,7 @@ export class Inbox extends DurableObject<unknown> {
   }
 
   enqueue(event: HookEvent): Receipt {
-    return this.ctx.storage.transactionSync(() => {
+    return this.storage.transactionSync(() => {
       const now = Date.now()
       this.prune(now)
       const existing = this.sql
@@ -74,7 +71,11 @@ export class Inbox extends DurableObject<unknown> {
       const { count } = this.sql
         .exec<{
           count: number
-        }>('SELECT COUNT(*) AS count FROM events WHERE source = ? AND createdAt > ?', event.source, now - minute)
+        }>(
+          'SELECT COUNT(*) AS count FROM events WHERE source = ? AND createdAt > ?',
+          event.source,
+          now - minute,
+        )
         .one()
       if (count >= ingressPerMinute) return { limited: true }
 
@@ -96,8 +97,27 @@ export class Inbox extends DurableObject<unknown> {
     })
   }
 
+  nextWakeAt(): number | null {
+    const now = Date.now()
+    this.prune(now)
+    const active = this.sql
+      .exec<{ startedAt: number }>("SELECT startedAt FROM events WHERE state = 'sending' LIMIT 1")
+      .toArray()[0]
+    if (active) return active.startedAt + deliveryTimeout
+    if (!this.sql.exec("SELECT 1 FROM events WHERE state = 'queued' LIMIT 1").toArray().length) {
+      return null
+    }
+    const { count, oldest } = this.sql
+      .exec<{
+        count: number
+        oldest: number | null
+      }>('SELECT COUNT(*) AS count, MIN(startedAt) AS oldest FROM authorizations WHERE startedAt > ?', now - minute)
+      .one()
+    return count >= deliveriesPerMinute && oldest !== null ? oldest + minute : now
+  }
+
   claim(): Claim | null {
-    return this.ctx.storage.transactionSync(() => {
+    return this.storage.transactionSync(() => {
       const now = Date.now()
       this.prune(now)
       this.sql.exec('DELETE FROM authorizations WHERE startedAt <= ?', now - minute)
@@ -135,7 +155,7 @@ export class Inbox extends DurableObject<unknown> {
   }
 
   finish(id: string, attempt: string, outcome: Outcome): boolean {
-    return this.ctx.storage.transactionSync(() => {
+    return this.storage.transactionSync(() => {
       const now = Date.now()
       this.prune(now)
       const current = this.sql
@@ -190,7 +210,7 @@ export class Inbox extends DurableObject<unknown> {
   }
 
   setPaused(source: string, paused: boolean): Rule {
-    return this.ctx.storage.transactionSync(() => {
+    return this.storage.transactionSync(() => {
       this.sql.exec(
         'INSERT INTO rules(source, paused) VALUES (?, ?) ON CONFLICT(source) DO UPDATE SET paused = excluded.paused',
         source,
@@ -201,7 +221,7 @@ export class Inbox extends DurableObject<unknown> {
   }
 
   setFilter(source: string, types: string[]): Rule {
-    return this.ctx.storage.transactionSync(() => {
+    return this.storage.transactionSync(() => {
       this.sql.exec(
         'INSERT INTO rules(source, types) VALUES (?, ?) ON CONFLICT(source) DO UPDATE SET types = excluded.types',
         source,

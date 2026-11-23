@@ -2,70 +2,52 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Code-Hex/MuseKnock)
 
-MuseKnock 可以将外部服务的 Webhook 通知发送到你自己的 Muse 侧边对话。例如，你可以接入构建通知，再告诉 Muse：“这个来源只发构建失败的通知。”
+MuseKnock 在 Cloudflare Worker 中接收外部 Webhook，直接投递到你自己的 Muse 侧边对话。Worker 保存事件、检查投递规则，再通过 Gadget 协议发送消息。部署后可以关闭用于配置的电脑。
 
 [快速开始](#快速开始) · [English](README.md) · [日本語](README.ja.md) · **简体中文**
 
 ```text
-外部服务 ──Webhook──▶ Cloudflare Worker ──▶ SQLite 队列
-Muse ──MCP──▶ Cloudflare Worker（管理投递规则）
-Mac 或 Linux 桥接程序 ──出站 HTTPS──▶ Worker（获取下一条通知）
-桥接程序 ──▶ 本地执行器 ──▶ Gadget SDK ──▶ Muse 侧边对话
+外部服务 ──Webhook──▶ Worker + Durable Object ──Gadget Link──▶ Muse 侧边对话
+Muse ──MCP──▶ Worker（暂停来源、过滤事件、查询回执）
 ```
 
 ## 快速开始
 
-你需要 Cloudflare 账户、自己的 Muse 账户和 Gadget SDK 令牌，以及 Node.js 22.12 或更高版本和 npm。请在保持在线的 Mac 或 Linux 主机上运行桥接程序。Mac 方案使用账户登录，无需蓝牙配对或单独的 Linux 设备。
+你需要 Cloudflare 账户、自己的 Muse 账户和 Gadget SDK 令牌。初次配置用的电脑需要 Node.js 22.12 或更高版本以及 npm。SDK 令牌仅供本人在自己的 Muse 账户中用于个人、非商业用途。[SDK 令牌使用条款](https://gadgets.muse.ai/sdk-terms)
 
-**1. 连接本地执行器。选择以下一种方式。**
+**1. 为 Worker 单独授权一个设备身份。** 选择以下一种方式，只需操作一次。交接后由 Worker 刷新这台设备的令牌。如果现有执行器或 SDK 守护进程已经使用这个身份，请在导入凭据前停止它并关闭自动重启。
 
-**macOS。** 安装 `uv` 并使用社区维护的 Muse Desktop Bridge。其安装程序可以安装 Python 3.13。交互式登录自己的 Muse 账户并完成验证，将令牌保存在 Mac 上。执行器允许 Muse 以当前 macOS 用户的权限运行命令和读写文件，请使用专用用户。需要接收通知时，请保持 Mac 唤醒。[Muse Desktop Bridge 安装说明](https://github.com/chaitanyarahalkar/muse-desktop-bridge/blob/3b6d0e0665d40d5537b21b701c18327e288741d9/README.md#quick-start)
+- **无需蓝牙设备。** 在 Mac 上使用社区维护的 Muse Desktop Bridge 登录。按照其认证说明，用自己的账户和 SDK 令牌完成登录。登录后即可停止配置，无需启动执行器。下一步将从本地状态文件中导入设备凭据。[社区版登录说明](https://github.com/chaitanyarahalkar/muse-desktop-bridge/blob/3b6d0e0665d40d5537b21b701c18327e288741d9/muse-auth/README.md)
+- **使用官方 Gadget SDK 配对。** 将一个专用设备与 Muse 应用配对，停止 SDK 守护进程，并准备该设备的 `pairing.json`。Linux SDK 默认将文件保存在 `/var/lib/musegadget/` 中。[官方配对说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md#install)
 
-```sh
-git clone https://github.com/chaitanyarahalkar/muse-desktop-bridge.git ~/muse-desktop-bridge
-cd ~/muse-desktop-bridge
-git checkout 3b6d0e0665d40d5537b21b701c18327e288741d9
-./scripts/setup.sh
-python3 muse-auth/muse_auth.py setup
-./muse-executor/muse-executor start
-./muse-executor/muse-executor status
-```
-
-等待 `status` 确认执行器已连接。MuseKnock 默认使用该目录中的套接字。如果克隆到了其他位置，请将 `muse-executor/.runtime/muse.sock` 的绝对路径写入 `.env.bridge` 的 `MUSEGADGET_SOCKET`。
-
-**Linux。** 准备一台支持低功耗蓝牙配对的 64 位 Linux 主机。使用自己的 Gadget SDK 令牌安装官方 Linux SDK，然后在手机的 **Settings → Devices** 中添加设备。Muse 可以使用运行 SDK 的 Linux 账户权限，因此建议使用专用账户。SDK 令牌仅供本人在自己的 Muse 账户中用于个人、非商业用途。[Linux SDK 安装说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md#install) · [SDK 令牌使用条款](https://gadgets.muse.ai/sdk-terms)
-
-**2. 生成配置。** 克隆此仓库，在项目根目录执行以下命令。
+**2. 生成 Worker 配置。** 克隆 MuseKnock，在项目根目录运行 `npm ci`。选择与你的设备授权方式对应的命令，并将路径替换为自己私有文件的绝对路径。
 
 ```sh
-npm ci
-npm run setup
+# 社区版登录状态
+npm run setup -- --device-state /path/to/muse-desktop-bridge/muse-auth/.state/state.json
 ```
 
-安装脚本将 Worker 的令牌写入 `.dev.vars`，将桥接程序的连接配置和目标对话 ID 写入 `.env.bridge`。只有文件所有者可以读写这两个文件。再次运行脚本会保留已有配置。
+```sh
+# 官方 SDK 配对文件
+npm run setup -- --pairing /path/to/pairing.json
+```
 
-**3. 部署 Worker。** 点击上方的 **Deploy to Cloudflare**，选择 Worker 名称，将部署命令设为 `npx wrangler deploy --minify`。在四个 Secret 输入框中分别填入 `.dev.vars` 中的同名值，然后部署。
+安装程序会在本地写入仅文件所有者可读写的 `.dev.vars`。社区版导入只复制设备 ID、设备刷新令牌和 SDK 令牌。如果导入官方配对文件，还需在 `.dev.vars` 中手动填写 `MUSE_SDK_TOKEN`。包含用户会话凭据的原始文件请保留在本地。
 
-如需使用命令行部署，请执行以下命令。默认 Worker 名称为 `museknock`。如果账户中已有同名 Worker，先修改 `wrangler.jsonc` 中的 `name`。
+如需手动配置，运行 `npm run setup`，再填写同一设备授权对应的 `MUSE_NODE_ID`、`MUSE_REFRESH_TOKEN` 和 `MUSE_SDK_TOKEN`。安装程序会生成 `HOOK_TOKEN`、`MCP_TOKEN`、`MCP_ADMIN_TOKEN` 和 `MUSE_SESSION_ID`。若要沿用已有侧边对话，请将其确切会话 ID 填入 `MUSE_SESSION_ID`。保留生成值会在首次投递成功时创建新的侧边对话。可选择设置 `MUSE_VM_ID` 以指定已分配的 VM。
+
+**3. 部署 Worker。** 点击上方的 **Deploy to Cloudflare**，选择 Worker 名称，将部署命令设为 `npx wrangler deploy --minify`，并在 Secrets 中输入 `.dev.vars` 里的同名值。也可以在项目根目录使用下面的 CLI 命令部署。默认 Worker 名称为 `museknock`。如果账户中已有同名 Worker，先修改 `wrangler.jsonc` 中的 `name`。
 
 ```sh
 npx wrangler login
 npm run deploy
 ```
 
-将部署后得到的 `https://…workers.dev` 地址填入 `.env.bridge` 的 `WORKER_URL`。若需继续使用已有的 Gadget 侧边对话，请将 `MUSE_SESSION_ID` 设为该对话的会话 ID。保留自动生成的 ID 会在首次投递时新建侧边对话。如果从其他电脑部署，请在执行器主机上也安装 MuseKnock 和依赖，并安全复制 `.env.bridge`。
-
-**4. 启动桥接程序。** 在执行器主机上的 MuseKnock 目录中，以有权访问套接字的用户运行以下命令。请保持执行器和桥接程序持续运行。
+**4. 发送通知。** 将示例 URL 替换为部署后显示的 HTTPS 地址。发送端只需要 Webhook 令牌。
 
 ```sh
-npm run bridge
-```
-
-**5. 发送通知。** 在另一个终端中进入第 2 步的目录。以下示例会加载两个配置文件。如果文件位于不同设备，请在发送端加载 `.dev.vars`，并将 `WORKER_URL` 设为已部署的地址。
-
-```sh
-. ./.dev.vars
-. ./.env.bridge
+WORKER_URL=https://your-worker.your-subdomain.workers.dev
+HOOK_TOKEN=$(node --env-file=.dev.vars -p 'process.env.HOOK_TOKEN')
 curl -i "$WORKER_URL/hooks/default" \
   -H "Authorization: Bearer $HOOK_TOKEN" \
   -H 'Content-Type: application/json' \
@@ -74,7 +56,7 @@ curl -i "$WORKER_URL/hooks/default" \
   --data '{"project":"hello","message":"测试失败"}'
 ```
 
-首次请求返回 HTTP `202` 和一个回执 ID。桥接程序通常会在 10 秒内发起下一次轮询。请在 Muse 侧边对话中查看通知。重复执行同一命令会返回 HTTP `200`、相同的 ID 和当前投递状态。发送下一条通知时请更换幂等键。
+首次请求返回 HTTP `202` 及回执 ID。Worker 安排投递，并将消息发送到 `MUSE_SESSION_ID` 指定的侧边对话。请在 Muse 中查看通知。使用相同的 `Idempotency-Key` 重发会返回 HTTP `200`、原回执 ID 和当前状态。新通知请使用新的幂等键。
 
 ## 在 Muse 中管理通知
 
@@ -85,16 +67,10 @@ curl -i "$WORKER_URL/hooks/default" \
 | `MCP_TOKEN`（只读） | “列出通知来源。”“查询回执 ID … 的投递状态。” |
 | `MCP_ADMIN_TOKEN`（读写） | “暂停 default。”“default 只允许 build_failed 事件。”“恢复 default。” |
 
-暂停来源也会拦下该来源正在排队的通知。恢复后，已拦下的通知不会补发。已经交给桥接程序的通知仍有可能送达。
+暂停来源会同时拦下尚在排队的通知。恢复来源只影响之后的投递，已开始发送的通知仍可能送达。
 
 ## 在本地试用
 
-```sh
-npm ci
-npm run setup
-npm run dev
-```
-
-将第 5 步的 `WORKER_URL` 设为 `http://127.0.0.1:8787` 即可在本地试用同一个 Webhook。即使没有已连接的执行器或 Muse 账户，也可以运行 `npm test`，通过本地 Worker 和测试用 SDK 套接字验证投递流程。使用 `npm run check` 检查类型，使用 `npm run deploy -- --dry-run` 检查部署包。
+用 `npm ci`、`npm test` 和 `npm run check` 运行本地 Worker 测试并检查类型。用 `npm run deploy -- --dry-run` 检查部署包。使用真实凭据运行 `npm run dev` 时，请使用单独授权的设备身份，以免与已部署的 Worker 同时刷新同一令牌。测试验证了本地投递协议，尚未验证向真实 Muse 账户投递。
 
 如需添加来源、处理自定义 Webhook 格式、了解限流规则或排查投递问题，请参阅[运维与自定义指南](docs/operations.zh-CN.md)。

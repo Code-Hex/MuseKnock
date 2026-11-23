@@ -8,44 +8,20 @@
 
 | 状态 | 含义与排查方法 |
 | --- | --- |
-| `queued` | 正在排队。请检查桥接程序是否运行、`WORKER_URL` 是否正确，以及执行器是否已连接到 Muse。 |
-| `sending` | 桥接程序已领取通知，正在尝试投递。 |
-| `sent` | Gadget SDK 已确认接收。请在 `.env.bridge` 的 `MUSE_SESSION_ID` 指定的侧边对话中查看 Muse 的回复。 |
+| `queued` | 正在等待 Worker 投递。请检查 Muse 密钥是否齐全、设备授权是否有效，以及设备是否有已分配的 VM。 |
+| `sending` | Worker 已领取事件，正在连接或发送。 |
+| `sent` | Muse 已确认接收消息。请在 `MUSE_SESSION_ID` 指定的侧边对话中查看消息和 Muse 的回复。 |
 | `suppressed` | 来源已暂停，或事件类型不在允许列表中。该通知的投递已结束。 |
 | `expired` | 通知已排队一小时，超过投递期限。 |
-| `unknown` | 发送后连接中断，或获得投递许可后两分钟内没有收到结果。请先查看对话记录，再决定是否发送一条新通知。 |
+| `unknown` | 消息可能已经发送，但 Worker 未能确认结果，或者两分钟的投递许可已经过期。发送新通知前请先查看侧边对话。 |
 
-如果桥接程序在写入 SDK 之前连接失败，或 SDK 明确报告尚未连接 Muse，MuseKnock 会按当前规则和有效期重试。Gadget SDK 没有用于消息投递的幂等键，因此不会自动重发 `unknown` 状态的通知。[SDK 本地投递协议](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/service.py#L277-L302)
+如果能确定提交前已经失败，Worker 会在投递限额和有效期内重试。如果消息可能已到达 Muse，Worker 会记录为 `unknown`，由你决定是否重发，以免因确认响应丢失而重复投递。[Gadget SDK 消息传输协议](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/link_client.py)
 
-如果找不到套接字，在 macOS 上进入 Muse Desktop Bridge 目录，运行 `./muse-executor/muse-executor status`。在 Linux 上运行 `sudo musegadget doctor`，检查守护进程及其运行账户。默认套接字在 macOS 上是 `~/muse-desktop-bridge/muse-executor/.runtime/muse.sock`，在 Linux 上是 `/run/musegadget/musegadget.sock`。如使用其他位置，请将绝对路径写入 `.env.bridge` 的 `MUSEGADGET_SOCKET`。执行器和 MuseKnock 桥接程序都需要保持运行。
+## 更新设备授权
 
-## 在 Linux 重启后自动投递
+交接后，Worker 会将轮换后的设备凭据保存在 Durable Object 中。请勿在其他执行器、本地开发环境或其他 Worker 部署中使用同一设备身份。如果 Muse 撤销了配对，请重新授权设备凭据，重新导入最新状态，并使用更新后的初始密钥重新部署。保留 `MUSE_SESSION_ID` 即可继续向同一侧边对话投递。
 
-使用有权访问 SDK 套接字的用户进行配置。先将 `.env.bridge` 的 `WORKER_URL` 设为部署后的地址，再用 Ctrl+C 退出手动启动的桥接程序。
-
-在项目目录中运行以下命令，创建 systemd 用户服务。服务配置将使用当前目录和 Node.js 可执行文件的路径。
-
-```sh
-mkdir -p ~/.config/systemd/user
-cat > ~/.config/systemd/user/museknock.service <<EOF
-[Unit]
-Description=MuseKnock bridge
-
-[Service]
-WorkingDirectory=$(pwd -P)
-ExecStart="$(node -p 'process.execPath')" --env-file=.env.bridge --import tsx bridge/main.ts
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-EOF
-systemctl --user daemon-reload
-systemctl --user enable --now museknock.service
-systemctl --user status museknock.service
-```
-
-用 `journalctl --user -u museknock.service -f` 查看日志。如需在用户登录前启动服务，请让 Linux 管理员运行 `loginctl enable-linger 用户名`。运行 `systemctl --user disable --now museknock.service` 可停止服务并关闭自动启动。
+Worker 使用标准设备 API `api.muse.ai` 和加密的 Link 网关 `hatch.metaaivm.com`。如果设置了 `MUSE_VM_ID`，请确认该 VM 已分配给设备。未指定时，Worker 会选择默认的已分配 VM，如果没有默认项则选择列表中的第一项。[Gadget SDK 设备 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 
 ## 发送 Webhook
 
@@ -59,7 +35,7 @@ systemctl --user status museknock.service
 | `X-Event-Type` | 过滤规则使用的事件类型，默认为 `notification`。来源名称和事件类型均为 1 至 64 个字符，以小写 ASCII 字母或数字开头，后续字符还可以包含 `_` 和 `-`。 |
 | `Idempotency-Key` | 同一来源内的唯一事件标识符，最多 128 个可打印的 ASCII 字符，不含空格。省略时，每个 POST 都会作为新事件处理。 |
 
-请求正文和解码后的文本各自最多为 32 KiB。正文只应包含希望交给 Muse 的信息。目标会话和凭据由桥接程序的配置决定。
+请求正文和解码后的文本各自最多为 32 KiB。正文只应包含希望交给 Muse 的信息。目标会话和凭据由 Worker 配置决定。
 
 每个来源在滚动的 60 秒内最多提交 10 个新事件。超出限制时返回 HTTP `429` 和 `Retry-After: 60`。所有来源合计每 60 秒最多获得 3 次投递许可，同时只处理一条。重试也占用配额。自收到事件起，去重和回执查询的有效期为 7 天。下次访问存储时会更新过期状态并删除旧记录。限额定义在 `src/store.ts` 中。
 
@@ -93,4 +69,8 @@ registerWebhook(app, 'ci', [
 | `set_source_paused` | `source`、`paused`（布尔值）。 | 管理 |
 | `set_event_filter` | `source`、`types`（允许的事件类型数组）。空数组允许所有类型。 | 管理 |
 
-如需轮换 Worker 凭据，请编辑 `.dev.vars` 并运行 `npm run deploy`。同时更新使用该令牌的发送端、桥接程序或连接器。
+如需轮换 Webhook 或 MCP 令牌，请修改 `.dev.vars` 中对应的值，运行 `npm run deploy`，并更新使用该令牌的发送端或连接器。
+
+## 验证 SDK 兼容性
+
+检出 Muse Gadget SDK 的提交 `e17081a45941415d483642dbe21c2a2e6ef85a13`，并在 Python 虚拟环境中安装其 `linux[test]` 包。将 `MUSE_PYTHON` 设为该环境的 Python 可执行文件路径，将 `MUSE_SDK_TESTS` 设为 SDK 中 `linux/tests` 目录的绝对路径。运行 `npm test` 即可使用测试凭据，在本地验证从接收 Webhook、经过 Worker 到 SDK 测试服务器收件的完整流程。

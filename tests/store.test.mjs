@@ -18,7 +18,14 @@ before(async () => {
       script:
         outputText +
         `
-      export class TestInbox extends Inbox {
+      import { DurableObject } from "cloudflare:workers";
+      export class TestInbox extends DurableObject {
+        constructor(ctx, env) { super(ctx, env); this.queue = new DeliveryQueue(ctx.storage) }
+        async fetch(request) {
+          const [, method, args] = await request.json()
+          const target = method === "age" ? this : this.queue
+          return Response.json(target[method](...args) ?? null)
+        }
         age(milliseconds) {
           this.ctx.storage.sql.exec(
             "UPDATE events SET createdAt = createdAt - ?, startedAt = startedAt - ?",
@@ -29,9 +36,9 @@ before(async () => {
       }
       export default {
         async fetch(request, env) {
-          const [name, method, args] = await request.json()
+          const [name] = await request.clone().json()
           const inbox = env.INBOX.getByName(name)
-          return Response.json(await inbox[method](...args) ?? null)
+          return inbox.fetch(request)
         }
       }
     `,
@@ -180,4 +187,22 @@ test('a failed attempt honors rule changes and expiry before retry', async () =>
     assert.equal((await call('status', id)).state, mode === 'expire' ? 'expired' : 'suppressed')
     assert.equal(await call('claim'), null)
   }
+})
+
+test('an alarm waits for the active attempt or the rolling limit, then stops on an empty queue', async () => {
+  const call = inbox('alarms')
+  assert.equal(await call('nextWakeAt'), null)
+  for (const key of ['one', 'two', 'three', 'four']) await call('enqueue', event(key))
+  for (let i = 0; i < 3; i++) {
+    assert.ok((await call('nextWakeAt')) <= Date.now())
+    const active = await call('claim')
+    assert.ok((await call('nextWakeAt')) > Date.now() + 100_000)
+    await call('finish', active.id, active.attempt, 'sent')
+  }
+  assert.ok((await call('nextWakeAt')) > Date.now() + 50_000)
+  await call('age', 61_000)
+  assert.ok((await call('nextWakeAt')) <= Date.now())
+  await call('claim')
+  await call('age', 121_000)
+  assert.equal(await call('nextWakeAt'), null)
 })

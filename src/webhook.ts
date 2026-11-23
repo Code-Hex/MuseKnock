@@ -2,15 +2,14 @@ import type { Hono, MiddlewareHandler } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { HTTPException } from 'hono/http-exception'
 import { identifier } from './identifiers.ts'
-import type { Inbox } from './store.ts'
+import { museConfig, type Inbox, type MuseBindings } from './inbox.ts'
 
 export type WorkerEnv = {
-  Bindings: {
+  Bindings: MuseBindings & {
     INBOX: DurableObjectNamespace<Inbox>
     HOOK_TOKEN: string
     MCP_TOKEN: string
     MCP_ADMIN_TOKEN: string
-    BRIDGE_TOKEN: string
   }
 }
 
@@ -44,6 +43,7 @@ export function registerWebhook(
 ) {
   if (!identifier.test(source)) throw new Error('Invalid webhook source name')
   app.post('/hooks/' + source, bodyLimit({ maxSize: 32 * 1024 }), ...middleware, async (c) => {
+    if (!museConfig(c.env)) return c.text('Configure the Muse device and side chat first', 503)
     const type = c.req.header('X-Event-Type') ?? 'notification'
     const key = c.req.header('Idempotency-Key') ?? crypto.randomUUID()
     if (!identifier.test(type) || !/^[!-~]{1,128}$/.test(key)) {

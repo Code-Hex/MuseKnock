@@ -3,7 +3,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { identifier } from './identifiers.ts'
-import type { Inbox } from './store.ts'
+import type { Inbox } from './inbox.ts'
 
 type DeliveryControls = Pick<
   DurableObjectStub<Inbox>,
@@ -46,7 +46,7 @@ export async function handleMcp(
     'get_delivery_status',
     {
       description:
-        'Look up a webhook delivery by its receipt ID. Sent means the gadget accepted the message.',
+        'Look up a webhook delivery by its receipt ID. Sent means Muse acknowledged the chat post.',
       inputSchema: { id: z.uuid() },
       annotations: readOnly,
     },

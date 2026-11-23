@@ -2,70 +2,52 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Code-Hex/MuseKnock)
 
-MuseKnock delivers webhooks to a side chat in your Muse account. Send it a build notification, then ask Muse to deliver only failed builds from that source.
+MuseKnock delivers webhooks directly from a Cloudflare Worker to a side chat in your Muse account. The Worker stores the event, checks your delivery rules, and posts it using the Muse Gadget protocol. You can turn off your setup computer after deployment.
 
 [Quick start](#quick-start) · **English** · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 ```text
-External service --webhook--> Cloudflare Worker --> SQLite queue
-Muse --MCP--> Cloudflare Worker (delivery rules)
-Bridge on Mac or Linux --outbound HTTPS--> Worker (fetch next event)
-Bridge --> local executor --> Gadget SDK --> Muse side chat
+External service --webhook--> Worker + Durable Object --Gadget Link--> Muse side chat
+Muse --MCP--> Worker (pause sources, filter events, inspect receipts)
 ```
 
 ## Quick start
 
-You need a Cloudflare account, your own Muse account and Gadget SDK token, Node.js 22.12 or later, and npm. Run the bridge on a Mac or Linux host that stays online. The Mac option uses account sign-in and requires no Bluetooth pairing or separate Linux device.
+You need a Cloudflare account, your own Muse account, and a Gadget SDK token. Use Node.js 22.12 or later and npm on your setup computer. The SDK token is for personal, non-commercial use with your own Muse account. [SDK token terms](https://gadgets.muse.ai/sdk-terms)
 
-**1. Connect a local executor to Muse. Choose one platform.**
+**1. Authorize a dedicated device identity once.** Choose one of the following paths. The Worker takes ownership of token refresh for this identity. If an executor or SDK daemon already uses it, stop it and disable automatic restarts before importing its credentials.
 
-**macOS.** Install `uv` and use the community Muse Desktop Bridge. Its installer can install Python 3.13. Sign in interactively with your own Muse account, complete its verification prompts, and keep the token on your Mac. The executor exposes shell and file operations to your Muse with the permissions of the macOS user running it. Choose a dedicated user and keep the Mac awake while you want notifications. [Muse Desktop Bridge setup](https://github.com/chaitanyarahalkar/muse-desktop-bridge/blob/3b6d0e0665d40d5537b21b701c18327e288741d9/README.md#quick-start)
+- **Without Bluetooth hardware:** Use the community Muse Desktop Bridge sign-in on a Mac. Follow its authentication setup with your own account and SDK token. Stop after sign-in, before starting the executor. The import reads the device identity and SDK token from the resulting local state file. [Community sign-in instructions](https://github.com/chaitanyarahalkar/muse-desktop-bridge/blob/3b6d0e0665d40d5537b21b701c18327e288741d9/muse-auth/README.md)
+- **With an official Gadget SDK pairing:** Pair a dedicated gadget with your Muse app. Stop the SDK daemon and use the `pairing.json` for that device. The Linux SDK normally keeps it in `/var/lib/musegadget/`. [Official pairing instructions](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md#install)
 
-```sh
-git clone https://github.com/chaitanyarahalkar/muse-desktop-bridge.git ~/muse-desktop-bridge
-cd ~/muse-desktop-bridge
-git checkout 3b6d0e0665d40d5537b21b701c18327e288741d9
-./scripts/setup.sh
-python3 muse-auth/muse_auth.py setup
-./muse-executor/muse-executor start
-./muse-executor/muse-executor status
-```
-
-Wait for `status` to confirm the executor is connected. MuseKnock uses the socket in this checkout by default. If you clone elsewhere, set `MUSEGADGET_SOCKET` in `.env.bridge` to the absolute path of `muse-executor/.runtime/muse.sock`.
-
-**Linux.** Use a 64-bit Linux host with Bluetooth LE for pairing. Install the official Linux SDK using your own Gadget SDK token. On your phone, add the device under **Settings → Devices**. Use a dedicated Linux account because Muse can act with that account’s permissions. The SDK token is for personal, non-commercial use with your own Muse account. [Linux SDK installation guide](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md#install) · [SDK token terms](https://gadgets.muse.ai/sdk-terms)
-
-**2. Generate the configuration.** Clone this repository and run these commands from its root directory.
+**2. Generate the Worker configuration.** Clone MuseKnock and run `npm ci` in its root directory. Run the setup command that matches your device. Replace the path with the absolute path of your own private file.
 
 ```sh
-npm ci
-npm run setup
+# Community sign-in state
+npm run setup -- --device-state /path/to/muse-desktop-bridge/muse-auth/.state/state.json
 ```
 
-Setup writes the Worker tokens to `.dev.vars` and the bridge connection settings and side chat ID to `.env.bridge`. Only the file owner can read or write them. Running setup again keeps the existing values.
+```sh
+# Official SDK pairing
+npm run setup -- --pairing /path/to/pairing.json
+```
 
-**3. Deploy the Worker.** Click **Deploy to Cloudflare** above and choose a Worker name. Set the deploy command to `npx wrangler deploy --minify`. For each of the four secrets, enter the value with the same name from `.dev.vars`, then deploy.
+Setup writes `.dev.vars` locally with owner-only permissions. The community import copies only the node ID, device refresh token, and SDK token. For an official pairing, fill in `MUSE_SDK_TOKEN` in `.dev.vars` yourself. Keep the original files, including any user-session credentials, off Cloudflare.
 
-To deploy from the CLI, run the commands below. The default Worker name is `museknock`. If that name is already in use in your account, change `name` in `wrangler.jsonc` first.
+To enter the device credentials yourself, run `npm run setup` and fill in `MUSE_NODE_ID`, `MUSE_REFRESH_TOKEN`, and `MUSE_SDK_TOKEN` from the same authorization. Setup generates `HOOK_TOKEN`, `MCP_TOKEN`, `MCP_ADMIN_TOKEN`, and `MUSE_SESSION_ID`. To continue an existing side chat, set `MUSE_SESSION_ID` to its exact session ID. Otherwise the first accepted post starts a new side chat. You may set `MUSE_VM_ID` to select a particular leased VM.
+
+**3. Deploy the Worker.** Click **Deploy to Cloudflare** above, choose a Worker name, and set the deploy command to `npx wrangler deploy --minify`. In Secrets, enter the named values from `.dev.vars`. Alternatively, deploy from the project directory using the CLI. The default Worker name is `museknock`. If that name is already in use in your account, change `name` in `wrangler.jsonc` first.
 
 ```sh
 npx wrangler login
 npm run deploy
 ```
 
-Set `WORKER_URL` in `.env.bridge` to the deployed Worker’s `https://…workers.dev` URL. To continue an existing gadget side chat, set `MUSE_SESSION_ID` to that chat’s session ID. Otherwise, keep the generated ID to start a new side chat on the first post. If deploying from another computer, install MuseKnock and its dependencies on the executor host and securely copy `.env.bridge` there.
-
-**4. Start the bridge.** From the MuseKnock directory on the executor host, run this command as the user who can access its socket. Keep the executor and bridge running.
+**4. Send a notification.** Replace the example URL below with the HTTPS URL shown after deployment. Only the webhook token is needed by the sender.
 
 ```sh
-npm run bridge
-```
-
-**5. Send a notification.** Open a second terminal in the directory from step 2. The example below loads both generated files. If the files are on separate machines, load `.dev.vars` on the sender and set `WORKER_URL` there to the deployed URL.
-
-```sh
-. ./.dev.vars
-. ./.env.bridge
+WORKER_URL=https://your-worker.your-subdomain.workers.dev
+HOOK_TOKEN=$(node --env-file=.dev.vars -p 'process.env.HOOK_TOKEN')
 curl -i "$WORKER_URL/hooks/default" \
   -H "Authorization: Bearer $HOOK_TOKEN" \
   -H 'Content-Type: application/json' \
@@ -74,7 +56,7 @@ curl -i "$WORKER_URL/hooks/default" \
   --data '{"project":"hello","message":"The tests failed"}'
 ```
 
-The first request returns HTTP `202` and a receipt ID. The bridge normally polls within 10 seconds. Look for the notification in your Muse side chat. Sending the same command again returns HTTP `200`, the same ID, and the current delivery state. Use a new key for the next notification.
+The first request returns HTTP `202` and a receipt ID. The Worker schedules delivery, then sends the notification to `MUSE_SESSION_ID`. Check that side chat in Muse. Repeat the request with the same `Idempotency-Key` to get HTTP `200`, the original receipt ID, and its current state. Use a new key for a new notification.
 
 ## Manage notifications from Muse
 
@@ -85,16 +67,10 @@ In Muse, open **Settings → Connectors** and create a custom connector. Set the
 | `MCP_TOKEN` (read-only) | “List my notification sources.” “Check the delivery status for receipt ID …” |
 | `MCP_ADMIN_TOKEN` (read/write) | “Pause default.” “Allow only build_failed events from default.” “Resume default.” |
 
-Pausing a source also suppresses its queued notifications. Resuming it affects future deliveries. Suppressed notifications stay suppressed. A notification already handed to the bridge may still arrive.
+Pausing a source suppresses queued notifications. Resuming affects future deliveries. A post already in progress may still arrive.
 
 ## Try it locally
 
-```sh
-npm ci
-npm run setup
-npm run dev
-```
-
-Set `WORKER_URL` in step 5 to `http://127.0.0.1:8787` to try the same webhook locally. You can run `npm test` without a live Muse account or a connected executor. It exercises delivery through a local Worker and a test SDK socket. Use `npm run check` for type checking and `npm run deploy -- --dry-run` to check the deployment bundle.
+Run `npm ci`, `npm test`, and `npm run check` to exercise the local Worker and type-check the project. Use `npm run deploy -- --dry-run` to check the bundle. For `npm run dev` with live Muse credentials, use a separate authorized identity so the local and deployed Workers do not rotate the same token. Tests exercise the local delivery protocol; posting to a real Muse account has not been verified.
 
 For custom webhook formats, additional sources, rate limits, and delivery troubleshooting, see the [operations guide](docs/operations.md).

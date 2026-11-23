@@ -5,5 +5,5 @@
     "moduleResolution": "NodeNext",
     "types": ["node"]
   },
-  "include": ["bridge", "scripts", "tests"]
+  "include": ["scripts", "tests"]
 }
