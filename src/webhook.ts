@@ -2,7 +2,7 @@ import type { Hono, MiddlewareHandler } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { HTTPException } from 'hono/http-exception'
 import { identifier } from './identifiers.ts'
-import { museConfig, type Inbox, type MuseBindings } from './inbox.ts'
+import { museDevice, type Inbox, type MuseBindings } from './inbox.ts'
 
 export type WorkerEnv = {
   Bindings: MuseBindings & {
@@ -43,7 +43,7 @@ export function registerWebhook(
 ) {
   if (!identifier.test(source)) throw new Error('Invalid webhook source name')
   app.post('/hooks/' + source, bodyLimit({ maxSize: 32 * 1024 }), ...middleware, async (c) => {
-    if (!museConfig(c.env)) return c.text('Configure the Muse device and side chat first', 503)
+    if (!museDevice(c.env)) return c.text('Configure the Muse device first', 503)
     const type = c.req.header('X-Event-Type') ?? 'notification'
     const key = c.req.header('Idempotency-Key') ?? crypto.randomUUID()
     if (!identifier.test(type) || !/^[!-~]{1,128}$/.test(key)) {
@@ -53,6 +53,7 @@ export function registerWebhook(
     if (!text.trim()) return c.text('Empty event', 400)
     if (new TextEncoder().encode(text).length > 32 * 1024) return c.text('Event too large', 413)
     const receipt = await inbox(c.env).enqueue({ source, key, type, text })
+    if ('noDestination' in receipt) return c.text('Register a destination side chat first', 503)
     if ('limited' in receipt) {
       c.header('Retry-After', '60')
       return c.text('Source rate limit reached', 429)

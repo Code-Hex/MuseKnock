@@ -2,75 +2,37 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Code-Hex/MuseKnock)
 
-MuseKnock は外部 Webhook を Cloudflare Worker で受け取り、自分の Muse のサイドチャットへ直接届けます。Worker が通知を保存し、配信ルールを確認して Gadget プロトコルで投稿します。デプロイ後は設定に使ったパソコンを停止できます。
+MuseKnock は Cloudflare Workers で Webhook を受け取り、既存の Muse サイドチャットに通知を届けます。投稿先は Muse の MCP コネクタから選べます。パソコンの電源を切っても Worker が配信を続けます。
 
 [クイックスタート](#クイックスタート) · [English](README.md) · **日本語** · [简体中文](README.zh-CN.md)
 
-```text
-外部サービス ──Webhook──▶ Worker + Durable Object ──Gadget Link──▶ Muse サイドチャット
-Muse ──MCP──▶ Worker（配信停止・フィルター・状態の確認）
-```
-
 ## クイックスタート
 
-Cloudflare アカウント、自分の Muse アカウント、Gadget SDK トークンを用意します。初回設定には Node.js 22.12 以降と npm を使います。SDK トークンは自分の Muse アカウントでの個人・非商用利用が対象です。[SDK トークンの利用条件](https://gadgets.muse.ai/sdk-terms)
+デプロイと設定はブラウザで完結します。Cloudflare と GitHub のアカウント、認証済みの Muse 端末情報、ガジェットが既存のチャットで使っている正確なセッション ID を用意してください。端末をまだ認証していない場合は、[初回の端末認証](docs/operations.ja.md#初回の端末認証)を参照してください。Gadget SDK トークンは自分の Muse アカウントでの個人・非商用利用が対象です。[SDK トークンの利用条件](https://gadgets.muse.ai/sdk-terms)
 
-**1. Worker 専用の端末 ID を一度だけ認証します。** 次のどちらかを選んでください。移行後は Worker がこの端末の認証情報を更新します。同じ ID を使う executor や SDK デーモンがある場合は、認証情報を取り込む前に停止し、自動起動も解除します。
+**1. Worker をデプロイします。** 上の **Deploy to Cloudflare** を押し、Worker 名を選びます。デプロイコマンドは初期値のままで進めてください。発行された Worker の HTTPS URL に `/setup` を付けて開くと、3種類のアクセストークンを生成できます。公式 SDK の `pairing.json` またはコミュニティ版の `state.json` を選ぶと、ブラウザ内で端末情報を読み取ります。ファイルは送信されません。
 
-- **Bluetooth 機器を使わない場合。** Mac ではコミュニティ製の Muse Desktop Bridge でサインインできます。自分のアカウントと SDK トークンを使って認証し、executor を起動する前に手順を終えます。次の手順でローカルの状態ファイルから端末の認証情報を取り込みます。[コミュニティ版のサインイン手順](https://github.com/chaitanyarahalkar/muse-desktop-bridge/blob/3b6d0e0665d40d5537b21b701c18327e288741d9/muse-auth/README.md)
-- **公式 Gadget SDK を使う場合。** 専用のガジェットを Muse アプリとペアリングし、SDK デーモンを停止します。その端末の `pairing.json` を用意してください。Linux SDK の標準の保存先は `/var/lib/musegadget/` です。[公式のペアリング手順](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md#install)
+**2. Worker のシークレットを6個設定します。** Cloudflare の **Workers & Pages → 対象の Worker → Settings → Variables and Secrets** で、下の値をそれぞれ **Secret** として追加し、**Deploy** を押します。3種類のアクセストークンはパスワードマネージャーに保存してください。[Cloudflare のシークレット設定](https://developers.cloudflare.com/workers/configuration/secrets/)
 
-**2. Worker の設定を作ります。** MuseKnock をクローンして、プロジェクトのルートで `npm ci` を実行します。次のうち認証方法に合うコマンドを実行してください。パスは自分のファイルの絶対パスに置き換えます。
-
-```sh
-# コミュニティ版のサインイン状態
-npm run setup -- --device-state /path/to/muse-desktop-bridge/muse-auth/.state/state.json
-```
-
-```sh
-# 公式 SDK のペアリング
-npm run setup -- --pairing /path/to/pairing.json
-```
-
-セットアップは所有者だけが読み書きできる `.dev.vars` を作成します。コミュニティ版の取り込み対象は端末 ID、端末リフレッシュトークン、SDK トークンのみです。公式 SDK の場合は `.dev.vars` の `MUSE_SDK_TOKEN` を自分で入力します。ユーザーセッションの認証情報を含む元ファイルはローカルに保管します。
-
-手動で設定する場合は `npm run setup` を実行し、同じ端末認証の `MUSE_NODE_ID`、`MUSE_REFRESH_TOKEN`、`MUSE_SDK_TOKEN` を入力します。`HOOK_TOKEN`、`MCP_TOKEN`、`MCP_ADMIN_TOKEN`、`MUSE_SESSION_ID` は自動生成されます。既存のサイドチャットを使う場合は、そのセッション ID を `MUSE_SESSION_ID` に指定します。生成された値を使うと、初回投稿で新しいサイドチャットが作られます。特定の貸与済み VM を使う場合は `MUSE_VM_ID` を設定できます。
-
-**3. Worker を公開します。** 上の **Deploy to Cloudflare** を押し、Worker 名を選びます。デプロイコマンドは `npx wrangler deploy --minify` に設定し、Secrets の各欄には `.dev.vars` の同名の値を入力します。CLI を使う場合は、プロジェクトのルートで次を実行してください。既定の Worker 名は `museknock` です。自分のアカウントでこの名前を使っている場合は、先に `wrangler.jsonc` の `name` を変更します。
-
-```sh
-npx wrangler login
-npm run deploy
-```
-
-**4. 通知を送ります。** 次の URL をデプロイ時に表示された HTTPS URL に置き換えてください。送信元が必要とするのは Webhook 用トークンだけです。
-
-```sh
-WORKER_URL=https://your-worker.your-subdomain.workers.dev
-HOOK_TOKEN=$(node --env-file=.dev.vars -p 'process.env.HOOK_TOKEN')
-curl -i "$WORKER_URL/hooks/default" \
-  -H "Authorization: Bearer $HOOK_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -H 'X-Event-Type: build_failed' \
-  -H 'Idempotency-Key: first-knock' \
-  --data '{"project":"hello","message":"テストが失敗しました"}'
-```
-
-初回は HTTP `202` と受付 ID が返ります。Worker が配信を予約し、`MUSE_SESSION_ID` のサイドチャットに投稿します。Muse で通知を確認してください。同じ `Idempotency-Key` で再送すると HTTP `200`、元の受付 ID、現在の配信状態が返ります。新しい通知には新しいキーを使います。
-
-## Muse から通知を管理する
-
-Muse の **Settings → Connectors** でカスタムコネクタを作成し、URL に Worker の `/mcp`、認証方式に Bearer を指定します。トークン欄には `.dev.vars` の対応する値を入力します。カスタムコネクタの提供状況は利用アカウントで確認してください。[Meta のコネクタ設定](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
-
-| 使うトークン | Muse への依頼例 |
+| シークレット | 設定する値 |
 | --- | --- |
-| `MCP_TOKEN`（読み取り） | 「通知元を一覧にして」「受付 ID … の配信状態を調べて」 |
-| `MCP_ADMIN_TOKEN`（読み書き） | 「default を一時停止して」「default は build_failed だけ許可して」「default を再開して」 |
+| `HOOK_TOKEN` | Webhook 送信元専用のランダムなトークン |
+| `MCP_TOKEN` | 閲覧用の Muse コネクタ専用のランダムなトークン |
+| `MCP_ADMIN_TOKEN` | 投稿先を管理するコネクタ専用のランダムなトークン |
+| `MUSE_NODE_ID` | 認証済み端末のノード ID |
+| `MUSE_REFRESH_TOKEN` | その端末の現在のリフレッシュトークン |
+| `MUSE_SDK_TOKEN` | その端末の認証に使った Gadget SDK トークン。公式のペアリングファイルを使う場合は別途入力します。 |
 
-送信元を停止すると、その送信元の配信待ち通知も抑止されます。再開は今後の配信に適用されます。すでに投稿中の通知は届く場合があります。
+アクセストークンは、パスワードマネージャーで長いランダムな英数字を3個生成してもかまいません。移行後は Worker が端末トークンを更新します。同じ端末 ID を使う executor や SDK デーモンが稼働中なら、引き渡し前に停止し、自動起動を解除してください。
 
-## ローカルで試す
+**3. Muse から既存のチャットを登録します。** **Settings → Connectors** でカスタムコネクタを作り、URL に `https://YOUR-WORKER.workers.dev/mcp`、認証方式に Bearer を指定します。自分の Worker の正確な接続 URL は `/setup` に表示されます。コネクタのトークン欄に `MCP_ADMIN_TOKEN` を入力してください。[Muse コネクタの設定手順](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
-`npm ci`、`npm test`、`npm run check` でローカル Worker のテストと型検査を実行します。バンドルの確認には `npm run deploy -- --dry-run` を使います。実際の認証情報で `npm run dev` を試す場合は、デプロイ済み Worker とのトークン更新の競合を避けるため、別途認証した端末 ID を使ってください。テスト対象はローカルの配信プロトコルです。実際の Muse アカウントへの投稿は未検証です。
+Muse に「セッション ID が `既存のセッションID` のサイドチャットを `builds` として登録して。通知先に選んで、現在の投稿先を表示して」と頼みます。セッション ID には、ガジェットが投稿時に `--session-id` に指定した値、または旧 MuseKnock の `MUSE_SESSION_ID` を使います。`builds` は MuseKnock 内の登録名です。会話タイトルからセッション ID を検索する機能はなく、未知の ID に投稿すると新しいチャットが作られる場合があります。[Gadget SDK のサイドチャット](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 
-送信元の追加、任意形式への対応、レート制限と配信状態、届かないときの確認方法は[運用とカスタマイズ](docs/operations.ja.md)にまとめています。
+**4. 通知を送ります。** 送信元サービスの Webhook 設定で、Worker の `/hooks/default` 宛てに `POST` を指定します。ヘッダーは `Authorization: Bearer YOUR_HOOK_TOKEN` と `Content-Type: application/json`、本文は例えば `{"message":"ビルドが完了しました"}` です。テストには `Idempotency-Key: first-knock` を設定してください。HTTP `202` と受付 ID が返ったら、Muse にその ID の配信状態を尋ね、投稿先のチャットを開きます。同じキーで再送すると現在の配信状態が返ります。
+
+## 投稿先を切り替える
+
+管理用コネクタに別の登録名とセッション ID を伝え、「そのチャットを通知先にして」と頼みます。投稿先が未設定なら最初の登録が自動で選ばれます。切り替えは次に受け付ける通知から有効です。配信待ちや再送の通知には、受付時の投稿先を使います。既存の構成で `MUSE_SESSION_ID` を設定済みなら、そのチャットを `default` として引き継ぎます。
+
+`MCP_TOKEN` を使う閲覧用コネクタでは、登録済みチャットや配信状態を確認できます。管理用コネクタでは通知元の一時停止やイベント種別の絞り込みもできます。CLI でのセットアップ、Webhook の形式、配信の調査については[運用ガイド](docs/operations.ja.md)を参照してください。

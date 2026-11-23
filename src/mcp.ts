@@ -3,14 +3,28 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { identifier } from './identifiers.ts'
+import { sideChatId } from './muse-device.ts'
 import type { Inbox } from './inbox.ts'
 
 type DeliveryControls = Pick<
   DurableObjectStub<Inbox>,
-  'status' | 'sources' | 'setPaused' | 'setFilter'
+  | 'status'
+  | 'sources'
+  | 'setPaused'
+  | 'setFilter'
+  | 'listSideChats'
+  | 'registerSideChat'
+  | 'setActiveSideChat'
 >
 
 const name = z.string().regex(identifier)
+const chatName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[\p{L}\p{N}][\p{L}\p{N}\p{M} ._-]*$/u)
+  .describe('A case-sensitive name for this destination in MuseKnock.')
 const readOnly = { readOnlyHint: true, openWorldHint: false }
 const changeRule = { readOnlyHint: false, idempotentHint: true, openWorldHint: false }
 
@@ -43,6 +57,16 @@ export async function handleMcp(
   )
 
   server.registerTool(
+    'list_side_chats',
+    {
+      description:
+        'List side chats registered with this Worker, their session IDs and the active webhook destination.',
+      annotations: readOnly,
+    },
+    async () => result(await inbox.listSideChats()),
+  )
+
+  server.registerTool(
     'get_delivery_status',
     {
       description:
@@ -63,6 +87,41 @@ export async function handleMcp(
   )
 
   if (canWrite) {
+    server.registerTool(
+      'register_side_chat',
+      {
+        description:
+          'Save or update a named webhook destination using the exact session ID of an existing Muse side chat. Ask the user for the ID if it is unknown. The first destination becomes active. Updating an active destination affects future webhooks.',
+        inputSchema: {
+          name: chatName,
+          sessionId: z
+            .string()
+            .regex(sideChatId)
+            .describe('The existing Muse side chat session ID.'),
+        },
+        annotations: changeRule,
+      },
+      async ({ name, sessionId }) => result(await inbox.registerSideChat(name, sessionId)),
+    )
+
+    server.registerTool(
+      'set_active_side_chat',
+      {
+        description:
+          'Route future webhooks to a registered side chat by name. Already accepted webhooks keep their original destination.',
+        inputSchema: { name: chatName },
+        annotations: changeRule,
+      },
+      async ({ name }) => {
+        const destinations = await inbox.setActiveSideChat(name)
+        if (destinations) return result(destinations)
+        return {
+          isError: true,
+          content: [{ type: 'text', text: 'No registered side chat has that name.' }],
+        }
+      },
+    )
+
     server.registerTool(
       'set_source_paused',
       {

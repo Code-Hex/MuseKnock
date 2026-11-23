@@ -2,9 +2,14 @@ import type { Claim, Delivery, Outcome } from './delivery.ts'
 
 export type HookEvent = Omit<Delivery, 'id'> & { key: string }
 type State = 'queued' | 'sending' | 'sent' | 'unknown' | 'suppressed' | 'expired'
-type Receipt = { id: string; state: State; duplicate: boolean } | { limited: true }
+type Receipt =
+  | { id: string; state: State; duplicate: boolean }
+  | { limited: true }
+  | { noDestination: true }
 type Status = Omit<Delivery, 'text'> & { state: State; createdAt: number }
 type Rule = { source: string; paused: boolean; types: string[] }
+type SideChat = { name: string; sessionId: string }
+type SideChats = { active: string | null; chats: SideChat[] }
 type RuleRow = { source: string; paused: number; types: string }
 
 const minute = 60_000
@@ -28,8 +33,15 @@ function decodeRule(row: RuleRow): Rule {
 export class DeliveryQueue {
   private readonly sql: SqlStorage
 
-  constructor(private readonly storage: DurableObjectStorage) {
+  constructor(
+    private readonly storage: DurableObjectStorage,
+    private readonly legacySession: string | null,
+  ) {
     this.sql = storage.sql
+    storage.transactionSync(() => this.initialize())
+  }
+
+  private initialize() {
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS events (
         id TEXT NOT NULL PRIMARY KEY,
@@ -42,6 +54,7 @@ export class DeliveryQueue {
         startedAt INTEGER,
         attempt TEXT,
         outcome TEXT,
+        sessionId TEXT,
         UNIQUE (source, key)
       );
       CREATE INDEX IF NOT EXISTS arrivals ON events(source, createdAt);
@@ -53,7 +66,78 @@ export class DeliveryQueue {
         paused INTEGER NOT NULL DEFAULT 0,
         types TEXT NOT NULL DEFAULT '[]'
       );
+      CREATE TABLE IF NOT EXISTS side_chats (
+        name TEXT NOT NULL PRIMARY KEY,
+        sessionId TEXT,
+        active INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS active_side_chat ON side_chats(active) WHERE active = 1;
     `)
+
+    // A null session ID in the registry follows the deployment's MUSE_SESSION_ID.
+    if (this.legacySession) {
+      this.sql.exec(
+        "INSERT INTO side_chats VALUES ('default', NULL, NOT EXISTS (SELECT 1 FROM side_chats WHERE active = 1)) ON CONFLICT(name) DO NOTHING",
+      )
+    } else {
+      this.sql.exec('DELETE FROM side_chats WHERE sessionId IS NULL')
+    }
+
+    if (
+      !this.sql
+        .exec<{ name: string }>('PRAGMA table_info(events)')
+        .toArray()
+        .some((col) => col.name === 'sessionId')
+    ) {
+      this.sql.exec('ALTER TABLE events ADD COLUMN sessionId TEXT')
+      if (this.legacySession) {
+        this.sql.exec(
+          "UPDATE events SET sessionId = ? WHERE state IN ('queued', 'sending')",
+          this.legacySession,
+        )
+      } else {
+        // A new registration must never inherit a backlog whose original destination is unknown.
+        this.sql.exec("UPDATE events SET state = 'suppressed', text = '' WHERE state = 'queued'")
+        this.sql.exec(
+          "UPDATE events SET state = 'unknown', outcome = 'unknown', text = '' WHERE state = 'sending'",
+        )
+      }
+    }
+  }
+
+  listSideChats(): SideChats {
+    const rows = this.sql
+      .exec<
+        SideChat & { active: number }
+      >('SELECT name, COALESCE(sessionId, ?) AS sessionId, active FROM side_chats ORDER BY name', this.legacySession)
+      .toArray()
+    return {
+      active: rows.find((row) => row.active)?.name ?? null,
+      chats: rows.map(({ name, sessionId }) => ({ name, sessionId })),
+    }
+  }
+
+  registerSideChat(name: string, sessionId: string): SideChats {
+    return this.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO side_chats (name, sessionId, active)
+          VALUES (?, ?, NOT EXISTS (SELECT 1 FROM side_chats WHERE active = 1))
+          ON CONFLICT(name) DO UPDATE SET sessionId = excluded.sessionId, active = MAX(side_chats.active, excluded.active)`,
+        name,
+        sessionId,
+      )
+      return this.listSideChats()
+    })
+  }
+
+  setActiveSideChat(name: string): SideChats | null {
+    return this.storage.transactionSync(() => {
+      if (!this.sql.exec('SELECT 1 FROM side_chats WHERE name = ?', name).toArray().length)
+        return null
+      this.sql.exec('UPDATE side_chats SET active = 0 WHERE active = 1')
+      this.sql.exec('UPDATE side_chats SET active = 1 WHERE name = ?', name)
+      return this.listSideChats()
+    })
   }
 
   enqueue(event: HookEvent): Receipt {
@@ -68,6 +152,13 @@ export class DeliveryQueue {
         .toArray()[0]
       if (existing) return { ...existing, duplicate: true }
 
+      const target = this.sql
+        .exec<{
+          sessionId: string
+        }>('SELECT COALESCE(sessionId, ?) AS sessionId FROM side_chats WHERE active = 1', this.legacySession)
+        .toArray()[0]
+      if (!target) return { noDestination: true }
+
       const { count } = this.sql
         .exec<{
           count: number
@@ -81,13 +172,14 @@ export class DeliveryQueue {
 
       const id = crypto.randomUUID()
       this.sql.exec(
-        "INSERT INTO events(id, source, key, type, text, state, createdAt) VALUES (?, ?, ?, ?, ?, 'queued', ?)",
+        "INSERT INTO events(id, source, key, type, text, state, createdAt, sessionId) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)",
         id,
         event.source,
         event.key,
         event.type,
         event.text,
         now,
+        target.sessionId,
       )
       this.suppressBlocked(event.source)
       const { state } = this.sql
@@ -111,7 +203,10 @@ export class DeliveryQueue {
       .exec<{
         count: number
         oldest: number | null
-      }>('SELECT COUNT(*) AS count, MIN(startedAt) AS oldest FROM authorizations WHERE startedAt > ?', now - minute)
+      }>(
+        'SELECT COUNT(*) AS count, MIN(startedAt) AS oldest FROM authorizations WHERE startedAt > ?',
+        now - minute,
+      )
       .one()
     return count >= deliveriesPerMinute && oldest !== null ? oldest + minute : now
   }
@@ -132,9 +227,9 @@ export class DeliveryQueue {
       if (busy || recent >= deliveriesPerMinute) return null
 
       const event = this.sql
-        .exec<Delivery>(
+        .exec<Delivery & { sessionId: string }>(
           `
-        SELECT id, source, type, text FROM events
+        SELECT id, source, type, text, sessionId FROM events
         WHERE state = 'queued' AND NOT ${blockedByRule}
         ORDER BY createdAt, rowid LIMIT 1
       `,

@@ -1,21 +1,8 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { chmod, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { parseArgs, parseEnv } from 'node:util'
-import { z } from 'zod'
-import { museDeviceSchema, sideChatId } from '../src/muse-device.ts'
-
-const { nodeId, sdkToken, refreshToken } = museDeviceSchema.shape
-const pairing = z.object({
-  token_type: z.literal('device'),
-  node_id: nodeId,
-  refresh_token: refreshToken,
-  noise_host: z.enum(['', 'hatch.metaaivm.com']).optional(),
-  api_url_v2: z.enum(['', 'https://api.muse.ai', 'https://api.muse.ai/']).optional(),
-})
-const desktopState = z.object({
-  sdk_token: sdkToken,
-  device: z.object({ device_id: nodeId, refresh_token: refreshToken }),
-})
+import { importDeviceRecord } from '../src/device-import.ts'
+import { sideChatId } from '../src/muse-device.ts'
 
 async function readOptional(path: string) {
   try {
@@ -26,7 +13,7 @@ async function readOptional(path: string) {
   }
 }
 
-async function importDevice(): Promise<Record<string, string>> {
+async function importDevice() {
   const { values } = parseArgs({
     options: { 'device-state': { type: 'string' }, pairing: { type: 'string' } },
   })
@@ -41,22 +28,7 @@ async function importDevice(): Promise<Record<string, string>> {
   } catch {
     throw new Error('The supplied device state file is not valid JSON.')
   }
-  if (values['device-state'] !== undefined) {
-    const state = desktopState.safeParse(record)
-    if (!state.success)
-      throw new Error(
-        'Expected a Muse Desktop Bridge device ID, device refresh token, and SDK token.',
-      )
-    return {
-      MUSE_NODE_ID: state.data.device.device_id,
-      MUSE_REFRESH_TOKEN: state.data.device.refresh_token,
-      MUSE_SDK_TOKEN: state.data.sdk_token,
-    }
-  }
-  const state = pairing.safeParse(record)
-  if (!state.success)
-    throw new Error('Expected a production Muse device pairing with node_id and refresh_token.')
-  return { MUSE_NODE_ID: state.data.node_id, MUSE_REFRESH_TOKEN: state.data.refresh_token }
+  return importDeviceRecord(record, values['device-state'] === undefined ? 'pairing' : 'desktop')
 }
 
 // Only rewrite managed assignments. Verify the parsed result before replacing a file with custom content.

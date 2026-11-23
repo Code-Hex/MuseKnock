@@ -2,6 +2,34 @@
 
 [English](operations.md) · [日本語](operations.ja.md) · **简体中文**
 
+## 首次授权设备
+
+如果已有当前有效的设备凭据，请直接进入[浏览器配置步骤](../README.zh-CN.md#快速开始)。让此 Worker 独占该设备身份。在 [Muse Gadgets](https://gadgets.muse.ai/) 的 **Account → SDK tokens** 中获取本人的 SDK 令牌。
+
+- **官方配对。** 在 Muse 应用中为专用设备配对。停止 SDK 守护进程后，在自己的 Worker 的 `/setup` 页面选择设备的 `pairing.json`。Linux SDK 通常将其保存在 `/var/lib/musegadget/` 下。请另外填写配对使用的 SDK 令牌。[官方配对指南](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md#install)
+- **通过浏览器使用社区工具登录。** 如果没有配对过的硬件，且愿意使用第三方工具登录，可以在自己的 GitHub Codespace 中打开 Muse Desktop Bridge 仓库。在浏览器的终端中运行 `git checkout 3b6d0e0665d40d5537b21b701c18327e288741d9`，再运行 `python3 muse-auth/muse_auth.py setup`。按提示使用自己的账户登录，完成一次性验证码或双重认证，并提供本人的 SDK 令牌。遇到账户验证时，可能仍需在 Muse 应用中操作。尚未使用真实账户在 Codespaces 中验证该登录流程。[社区登录说明](https://github.com/chaitanyarahalkar/muse-desktop-bridge/blob/3b6d0e0665d40d5537b21b701c18327e288741d9/muse-auth/README.md) · [在 Codespace 中打开 Muse Desktop Bridge](https://codespaces.new/chaitanyarahalkar/muse-desktop-bridge) · [GitHub Codespaces 说明](https://docs.github.com/en/codespaces/developing-in-a-codespace/creating-a-codespace-for-a-repository)
+
+如果使用 Codespace，下载文件前请在同一个浏览器终端运行以下命令。它只将三个设备字段写入仅所有者可读写的文件。
+
+```sh
+python3 - <<'PYTHON'
+import json, os, tempfile
+from pathlib import Path
+
+directory = Path("muse-auth/.state")
+state = json.loads((directory / "state.json").read_text())
+device = {key: state["device"][key] for key in ("device_id", "refresh_token")}
+with tempfile.NamedTemporaryFile(mode="w", dir=directory, delete=False) as out:
+    json.dump({"sdk_token": state["sdk_token"], "device": device}, out)
+os.replace(out.name, directory / "museknock-device.json")
+PYTHON
+```
+
+在浏览器的文件列表中下载 `muse-auth/.state/museknock-device.json`，在自己的 Worker 的 `/setup` 页面选择该文件，并妥善保管。原始账户登录信息留在 Codespace 内，完成移交后即可删除 Codespace。
+
+官方设备配对需通过 Muse 应用完成。Deploy to Cloudflare 按钮负责创建 Worker，设备授权则由 Muse 管理。
+
+
 ## 排查未收到的通知
 
 请 Muse 按回执 ID 查询投递状态。即使尚未配置连接器，也可以用原来的 `Idempotency-Key` 重发 Webhook，查看该通知的状态。
@@ -10,7 +38,7 @@
 | --- | --- |
 | `queued` | 正在等待 Worker 投递。请检查 Muse 密钥是否齐全、设备授权是否有效，以及设备是否有已分配的 VM。 |
 | `sending` | Worker 已领取事件，正在连接或发送。 |
-| `sent` | Muse 已确认接收消息。请在 `MUSE_SESSION_ID` 指定的侧边对话中查看消息和 Muse 的回复。 |
+| `sent` | Muse 已确认接收。请打开 Worker 收到通知时选中的目标对话。 |
 | `suppressed` | 来源已暂停，或事件类型不在允许列表中。该通知的投递已结束。 |
 | `expired` | 通知已排队一小时，超过投递期限。 |
 | `unknown` | 消息可能已经发送，但 Worker 未能确认结果，或者两分钟的投递许可已经过期。发送新通知前请先查看侧边对话。 |
@@ -19,7 +47,7 @@
 
 ## 更新设备授权
 
-交接后，Worker 会将轮换后的设备凭据保存在 Durable Object 中。请勿在其他执行器、本地开发环境或其他 Worker 部署中使用同一设备身份。如果 Muse 撤销了配对，请重新授权设备凭据，重新导入最新状态，并使用更新后的初始密钥重新部署。保留 `MUSE_SESSION_ID` 即可继续向同一侧边对话投递。
+交接后，Worker 会将轮换后的设备凭据保存在 Durable Object 中。请勿在其他执行器、本地开发环境或其他 Worker 部署中使用同一设备身份。如果 Muse 撤销了配对，请重新授权设备凭据，重新导入最新状态，并使用更新后的初始密钥重新部署。已注册的目标对话保存在 Durable Object 中。
 
 Worker 使用标准设备 API `api.muse.ai` 和加密的 Link 网关 `hatch.metaaivm.com`。如果设置了 `MUSE_VM_ID`，请确认该 VM 已分配给设备。未指定时，Worker 会选择默认的已分配 VM，如果没有默认项则选择列表中的第一项。[Gadget SDK 设备 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 
@@ -35,13 +63,13 @@ Worker 使用标准设备 API `api.muse.ai` 和加密的 Link 网关 `hatch.meta
 | `X-Event-Type` | 过滤规则使用的事件类型，默认为 `notification`。来源名称和事件类型均为 1 至 64 个字符，以小写 ASCII 字母或数字开头，后续字符还可以包含 `_` 和 `-`。 |
 | `Idempotency-Key` | 同一来源内的唯一事件标识符，最多 128 个可打印的 ASCII 字符，不含空格。省略时，每个 POST 都会作为新事件处理。 |
 
-请求正文和解码后的文本各自最多为 32 KiB。正文只应包含希望交给 Muse 的信息。目标会话和凭据由 Worker 配置决定。
+请求正文和解码后的文本各自最多为 32 KiB。正文只应包含希望交给 Muse 的信息。Worker 接收新事件时会保存当时选中的目标会话。
 
 每个来源在滚动的 60 秒内最多提交 10 个新事件。超出限制时返回 HTTP `429` 和 `Retry-After: 60`。所有来源合计每 60 秒最多获得 3 次投递许可，同时只处理一条。重试也占用配额。自收到事件起，去重和回执查询的有效期为 7 天。下次访问存储时会更新过期状态并删除旧记录。限额定义在 `src/store.ts` 中。
 
 ## 添加来源或正文格式
 
-在 `src/index.ts` 中向 `registerWebhook` 传入来源名称、包含认证逻辑的 Hono 中间件数组，以及读取正文的函数。例如，要从 CI 通知中仅提取作业名称，请在 `WorkerEnv` 的 `Bindings` 中加入 `CI_HOOK_TOKEN`，在 `.dev.vars` 中为其设置单独的随机密钥，并注册以下路由。
+在 `src/index.ts` 中向 `registerWebhook` 传入来源名称、包含认证逻辑的 Hono 中间件数组，以及读取正文的函数。例如，要从 CI 通知中仅提取作业名称，请在 `WorkerEnv` 的 `Bindings` 中加入 `CI_HOOK_TOKEN`，将其设为独立的随机 Worker 密钥，再注册以下路由。
 
 ```ts
 import { HTTPException } from 'hono/http-exception'
@@ -64,13 +92,22 @@ registerWebhook(app, 'ci', [
 
 | 工具 | 参数与结果 | 权限 |
 | --- | --- | --- |
+| `list_side_chats` | 列出在 MuseKnock 中注册的名称、会话 ID 和当前目标。 | 只读 |
+| `register_side_chat` | 用 `name`、`sessionId` 新建或更新记录。尚无投递目标时自动选中首次注册的对话。 | 管理 |
+| `set_active_side_chat` | 通过 `name` 选择已有记录，作为之后接收通知的目标。 | 管理 |
 | `list_sources` | 无参数。列出有接收记录或投递规则的来源。 | 只读 |
 | `get_delivery_status` | `id`（回执 ID）。返回投递信息，不含正文。 | 只读 |
 | `set_source_paused` | `source`、`paused`（布尔值）。 | 管理 |
 | `set_event_filter` | `source`、`types`（允许的事件类型数组）。空数组允许所有类型。 | 管理 |
 
-如需轮换 Webhook 或 MCP 令牌，请修改 `.dev.vars` 中对应的值，运行 `npm run deploy`，并更新使用该令牌的发送端或连接器。
+注册名为 1 至 64 个字符，以 ASCII 小写字母或数字开头，后续还允许下划线和连字符。会话 ID 区分大小写，允许使用 1 至 64 个 ASCII 字母、数字或连字符。注册时只保存你提供的 ID，不会发送测试消息。要继续原有对话，请使用设备发消息时使用的会话 ID。升级时，有效的旧版 `MUSE_SESSION_ID` 将显示为 `default`。设备密钥不全或未选择投递目标时，已通过身份验证的 Webhook 请求将收到 HTTP `503`。
+
+轮换 Webhook 或 MCP 令牌时，在 Cloudflare 更新对应的 Worker 密钥并部署，再更新使用该令牌的发送端或连接器。
 
 ## 验证 SDK 兼容性
 
 检出 Muse Gadget SDK 的提交 `e17081a45941415d483642dbe21c2a2e6ef85a13`，并在 Python 虚拟环境中安装其 `linux[test]` 包。将 `MUSE_PYTHON` 设为该环境的 Python 可执行文件路径，将 `MUSE_SDK_TESTS` 设为 SDK 中 `linux/tests` 目录的绝对路径。运行 `npm test` 即可使用测试凭据，在本地验证从接收 Webhook、经过 Worker 到 SDK 测试服务器收件的完整流程。
+
+## 可选的 CLI 配置
+
+在 Node.js 22.12 或更高版本中，运行 `npm ci` 和 `npm run setup -- --pairing /path/to/pairing.json`。使用社区登录状态时将参数换为 `--device-state /path/to/state.json`。编辑生成的 `.dev.vars`，补全设备凭据。若要使用已有对话，请把生成的 `MUSE_SESSION_ID` 改为原有的 ID，或者省略该设置，改由 MCP 注册对话。运行 `npx wrangler login` 后，用 `npm run deploy:local` 上传设置。使用 `npm test`、`npm run check` 和 `npm run deploy -- --dry-run` 进行本地验证。在 `npm run dev` 中发送真实消息时，请使用单独的设备凭据。尚未验证向真实 Muse 账户投递。

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Worker setup · MuseKnock</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./setup.js"></script>
+</head>
+<body>
+  <main>
+    <header><span class="brand">MuseKnock</span><h1>Worker setup</h1>
+      <p>Prepare the six secrets for your Worker. Values stay in this tab until you copy them. Keep your tokens in your password manager before closing or reloading the page.</p>
+    </header>
+    <section>
+      <h2>Access tokens</h2>
+      <p>For a new installation, generate one token each for the webhook sender, read-only connector, and admin connector. If you already have these tokens, keep using them.</p>
+      <button id="generate" type="button">Generate three tokens</button>
+      <div id="tokens"></div>
+    </section>
+    <section>
+      <h2>Muse device</h2>
+      <p>Choose your authorized device’s <code>pairing.json</code> or Muse Desktop Bridge <code>state.json</code>. This page reads the file in your browser. Stop the executor for that identity before handing it over to the Worker.</p>
+      <label for="device">Device authorization file</label><input id="device" type="file" accept=".json,application/json">
+      <p role="status" id="file-status"></p><div id="credentials"></div>
+    </section>
+    <section>
+      <h2>Save and connect</h2>
+      <ol>
+        <li>In the Cloudflare dashboard, open this Worker and choose <strong>Settings → Variables and Secrets</strong>. Add each value as a <strong>Secret</strong> and deploy the changes.</li>
+        <li>In Muse, add a custom connector using the URL below and <code>MCP_ADMIN_TOKEN</code> as its Bearer token.</li>
+        <li>Ask Muse to register your existing side chat by name and exact session ID. The first registration becomes the destination on a fresh Worker. Ask it to list the registered chats to check the active one.</li>
+      </ol>
+      <dl><dt>Connector URL</dt><dd id="connector-url"></dd><dt>Webhook URL</dt><dd id="hook-url"></dd></dl>
+    </section>
+    <p id="copy-status" role="status"></p>
+    <noscript>Enable JavaScript to read device files or generate access tokens.</noscript>
+  </main>
+</body>
+</html>

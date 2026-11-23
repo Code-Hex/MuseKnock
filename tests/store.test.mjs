@@ -20,12 +20,30 @@ before(async () => {
         `
       import { DurableObject } from "cloudflare:workers";
       export class TestInbox extends DurableObject {
-        constructor(ctx, env) { super(ctx, env); this.queue = new DeliveryQueue(ctx.storage) }
         async fetch(request) {
-          const [, method, args] = await request.json()
-          const target = method === "age" ? this : this.queue
+          const [name, method, args] = await request.json()
+          if (!this.queue) {
+            if (name.startsWith("legacy-")) {
+              this.ctx.storage.sql.exec(\`
+                CREATE TABLE events (
+                  id TEXT NOT NULL PRIMARY KEY, source TEXT NOT NULL, key TEXT NOT NULL,
+                  type TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, createdAt INTEGER NOT NULL,
+                  startedAt INTEGER, attempt TEXT, outcome TEXT, UNIQUE(source, key)
+                )
+              \`)
+              for (const state of ["queued", "sending"]) {
+                this.ctx.storage.sql.exec(
+                  "INSERT INTO events VALUES (?, 'monitor', ?, 'alert', 'previous payload', ?, ?, ?, ?, NULL)",
+                  state, state, state, Date.now(), Date.now(), "old-attempt"
+                )
+              }
+            }
+            this.queue = new DeliveryQueue(this.ctx.storage, name.endsWith("empty") ? null : "legacy-room")
+          }
+          const target = method === "age" || method === "reopen" ? this : this.queue
           return Response.json(target[method](...args) ?? null)
         }
+        reopen(sessionId) { this.queue = new DeliveryQueue(this.ctx.storage, sessionId) }
         age(milliseconds) {
           this.ctx.storage.sql.exec(
             "UPDATE events SET createdAt = createdAt - ?, startedAt = startedAt - ?",
@@ -74,7 +92,8 @@ test('one receipt per source and key, one authorization even with concurrent cla
   const claims = await Promise.all([call('claim'), call('claim')])
   const [claim] = claims.filter(Boolean)
   assert.equal(claims.filter(Boolean).length, 1)
-  const { attempt, ...payload } = claim
+  const { attempt, sessionId, ...payload } = claim
+  assert.equal(sessionId, 'legacy-room')
   assert.match(attempt, /^[a-f0-9-]{36}$/)
   assert.deepEqual(payload, { id, source: 'monitor', type: 'alert', text: '外部のメッセージ' })
   assert.equal(await call('finish', id, attempt, 'sent'), true)
@@ -205,4 +224,85 @@ test('an alarm waits for the active attempt or the rolling limit, then stops on 
   await call('claim')
   await call('age', 121_000)
   assert.equal(await call('nextWakeAt'), null)
+})
+
+test('registers existing side chats and keeps the destination of each accepted notification', async () => {
+  const call = inbox('registry-empty')
+  assert.deepEqual(await call('listSideChats'), { active: null, chats: [] })
+  assert.deepEqual(await call('enqueue', event('alert-1')), { noDestination: true })
+  const first = { name: '障害対応', sessionId: 'room-one' }
+  assert.deepEqual(await call('registerSideChat', first.name, first.sessionId), {
+    active: first.name,
+    chats: [first],
+  })
+  const receipt = await call('enqueue', event('alert-1'))
+  assert.equal(receipt.duplicate, false)
+  await call('registerSideChat', 'backup', 'room-two')
+  assert.equal((await call('listSideChats')).active, first.name)
+  assert.equal(await call('setActiveSideChat', 'missing'), null)
+  assert.equal((await call('setActiveSideChat', 'backup')).active, 'backup')
+  const second = await call('enqueue', event('alert-2'))
+  await call('registerSideChat', 'backup', 'room-three')
+  await call('reopen', null)
+  assert.deepEqual(await call('listSideChats'), {
+    active: 'backup',
+    chats: [{ name: 'backup', sessionId: 'room-three' }, first],
+  })
+  assert.deepEqual(await call('enqueue', event('alert-1')), { ...receipt, duplicate: true })
+  const one = await call('claim')
+  assert.equal(one.id, receipt.id)
+  assert.equal(one.sessionId, 'room-one')
+  await call('finish', one.id, one.attempt, 'not_sent')
+  const retry = await call('claim')
+  assert.equal(retry.sessionId, 'room-one')
+  await call('finish', retry.id, retry.attempt, 'sent')
+  const two = await call('claim')
+  assert.equal(two.id, second.id)
+  assert.equal(two.sessionId, 'room-two')
+  await call('finish', two.id, two.attempt, 'sent')
+  await call('age', 61_000)
+  await call('enqueue', event('alert-3'))
+  assert.equal((await call('claim')).sessionId, 'room-three')
+})
+
+test('keeps environment-based installs working until their default is explicitly updated', async () => {
+  const call = inbox('routes')
+  assert.deepEqual(await call('listSideChats'), {
+    active: 'default',
+    chats: [{ name: 'default', sessionId: 'legacy-room' }],
+  })
+  await call('registerSideChat', 'other', 'other-room')
+  assert.equal((await call('listSideChats')).active, 'default')
+  await call('enqueue', event('before-change'))
+  await call('reopen', 'new-env-room')
+  assert.equal((await call('listSideChats')).chats[0].sessionId, 'new-env-room')
+  await call('registerSideChat', 'default', 'mcp-room')
+  await call('reopen', 'another-env-room')
+  assert.equal((await call('listSideChats')).chats[0].sessionId, 'mcp-room')
+  assert.equal((await call('claim')).sessionId, 'legacy-room')
+})
+
+test('migrates previously queued events with the original configured session, never a newly registered one', async () => {
+  const configured = inbox('legacy-configured')
+  await configured('registerSideChat', 'other', 'changed-room')
+  await configured('setActiveSideChat', 'other')
+  await configured('age', 121_000)
+  assert.equal((await configured('status', 'sending')).state, 'unknown')
+  const claim = await configured('claim')
+  assert.equal(claim.id, 'queued')
+  assert.equal(claim.sessionId, 'legacy-room')
+
+  const missing = inbox('legacy-empty')
+  await missing('registerSideChat', 'other', 'changed-room')
+  assert.equal((await missing('status', 'queued')).state, 'suppressed')
+  assert.equal((await missing('status', 'sending')).state, 'unknown')
+  assert.equal(await missing('claim'), null)
+})
+
+test('registering a saved name selects it if the environment fallback has been removed', async () => {
+  const call = inbox('removed-default')
+  await call('registerSideChat', 'existing', 'old-room')
+  await call('reopen', null)
+  assert.equal((await call('listSideChats')).active, null)
+  assert.equal((await call('registerSideChat', 'existing', 'new-room')).active, 'existing')
 })

@@ -9,9 +9,11 @@
   "scripts": {
     "setup": "tsx scripts/setup.ts",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy --minify --secrets-file .dev.vars",
-    "check": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
-    "test": "tsx --test tests/*.test.*"
+    "deploy": "wrangler deploy --minify",
+    "check": "tsc -p tsconfig.json && tsc -p tsconfig.node.json && tsc -p tsconfig.browser.json",
+    "test": "tsx --test tests/*.test.*",
+    "deploy:local": "wrangler deploy --minify --secrets-file .dev.vars",
+    "build:setup": "node scripts/build-setup.mjs"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.17.0",

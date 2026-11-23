@@ -53,3 +53,15 @@ test('incomplete device configuration rejects a webhook before queuing it', asyn
   })
   assert.equal(response.status, 503)
 })
+
+test('a deployment without an initial chat rejects new webhooks until a chat is registered', async (t) => {
+  const worker = await startWorker(undefined, { MUSE_SESSION_ID: '' })
+  t.after(() => worker.close())
+  const response = await fetch(new URL('/hooks/default', worker.url), {
+    method: 'POST',
+    headers: { Authorization: 'Bearer HOOK_TOKEN-test' },
+    body: 'event',
+  })
+  assert.equal(response.status, 503)
+  assert.match(await response.text(), /register.*side chat/i)
+})

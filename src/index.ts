@@ -7,6 +7,8 @@ import { inbox, registerWebhook, type WorkerEnv } from './webhook.ts'
 export { Inbox } from './inbox.ts'
 
 const app = new Hono<WorkerEnv>()
+app.get('/', (c) => c.redirect('/setup/'))
+
 const matches = (token: string, secret: string | undefined) =>
   secret ? timingSafeEqual(token, secret) : false
 

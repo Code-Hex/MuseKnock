@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { fetch as localFetch, Response } from 'miniflare'
 import { sendOverLink } from '../src/link/chat.ts'
+import { connect } from './mcp-client.ts'
 import { startWorker } from './worker.ts'
 
 test(
@@ -62,35 +63,54 @@ test(
       }
     }
     const accountRequests: string[] = []
-    const worker = await startWorker(async (req) => {
-      const url = new URL(req.url)
-      if (url.origin === 'https://hatch.metaaivm.com') {
-        assert.equal(req.headers.get('upgrade'), 'websocket')
-        return localFetch('http://127.0.0.1:' + port + url.pathname + url.search, {
-          headers: { Upgrade: 'websocket', Authorization: req.headers.get('authorization') ?? '' },
-          redirect: 'manual',
+    const worker = await startWorker(
+      async (req) => {
+        const url = new URL(req.url)
+        if (url.origin === 'https://hatch.metaaivm.com') {
+          assert.equal(req.headers.get('upgrade'), 'websocket')
+          return localFetch('http://127.0.0.1:' + port + url.pathname + url.search, {
+            headers: {
+              Upgrade: 'websocket',
+              Authorization: req.headers.get('authorization') ?? '',
+            },
+            redirect: 'manual',
+          })
+        }
+        assert.equal(url.origin, 'https://api.muse.ai')
+        accountRequests.push(url.pathname)
+        if (req.method === 'POST' && url.pathname === '/device_token/refresh') {
+          assert.equal(
+            req.headers.get('authorization'),
+            'Bearer hatch_refresh:test-initial-refresh',
+          )
+          assert.deepEqual(await req.json(), {
+            device_id: 'test-123abc',
+            sdk_token: 'mgst_' + 'A'.repeat(43),
+          })
+          return Response.json({ access_token: 'local-access', refresh_token: 'local-refresh' })
+        }
+        assert.equal(req.method, 'GET')
+        assert.equal(url.pathname, '/fetch_vms')
+        assert.equal(req.headers.get('authorization'), 'Bearer local-access')
+        return Response.json({
+          vm_list: [
+            { vm_id: 'local-vm', vm_auth_token: 'local-vm-token', vm_url: 'https://vm.example' },
+          ],
         })
-      }
-      assert.equal(url.origin, 'https://api.muse.ai')
-      accountRequests.push(url.pathname)
-      if (req.method === 'POST' && url.pathname === '/device_token/refresh') {
-        assert.equal(req.headers.get('authorization'), 'Bearer hatch_refresh:test-initial-refresh')
-        assert.deepEqual(await req.json(), {
-          device_id: 'test-123abc',
-          sdk_token: 'mgst_' + 'A'.repeat(43),
-        })
-        return Response.json({ access_token: 'local-access', refresh_token: 'local-refresh' })
-      }
-      assert.equal(req.method, 'GET')
-      assert.equal(url.pathname, '/fetch_vms')
-      assert.equal(req.headers.get('authorization'), 'Bearer local-access')
-      return Response.json({
-        vm_list: [
-          { vm_id: 'local-vm', vm_auth_token: 'local-vm-token', vm_url: 'https://vm.example' },
-        ],
-      })
-    })
+      },
+      { MUSE_SESSION_ID: '' },
+    )
     t.after(() => worker.close())
+    const admin = await connect(new URL('/mcp', worker.url), 'MCP_ADMIN_TOKEN-test')
+    t.after(() => admin.close())
+    const selected = await admin.callTool({
+      name: 'register_side_chat',
+      arguments: { name: 'My existing chat', sessionId: 'same-chat' },
+    })
+    assert.deepEqual(selected.structuredContent, {
+      active: 'My existing chat',
+      chats: [{ name: 'My existing chat', sessionId: 'same-chat' }],
+    })
     const post = () =>
       fetch(new URL('/hooks/default', worker.url), {
         method: 'POST',
