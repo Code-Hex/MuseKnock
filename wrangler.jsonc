@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "museknock",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-19",
+  "durable_objects": {
+    "bindings": [{ "name": "INBOX", "class_name": "Inbox" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Inbox"] }]
+}
