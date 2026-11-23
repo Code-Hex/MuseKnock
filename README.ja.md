@@ -1,10 +1,17 @@
-# MuseKnock
+<h1 align="center">MuseKnock</h1>
+<p align="center"><strong>Webhook 通知を Muse のサイドチャットへ</strong></p>
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Code-Hex/MuseKnock)
+<p align="center">
+  <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/Code-Hex/MuseKnock"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a>
+</p>
+
+<p align="center"><a href="README.md">English</a> · <strong>日本語</strong> · <a href="README.zh-CN.md">简体中文</a></p>
+
+![封筒を持った X、LINE、Telegram が並ぶ前で Slack が扉をノックし、Muse が顔を出す。](assets/museknock-doorstep.webp)
 
 MuseKnock は Cloudflare Workers で Webhook を受け取り、既存の Muse サイドチャットに通知を届けます。投稿先は Muse の MCP コネクタから選べます。パソコンの電源を切っても Worker が配信を続けます。
 
-[クイックスタート](#クイックスタート) · [レシピ集](docs/recipes/README.ja.md) · [English](README.md) · **日本語** · [简体中文](README.zh-CN.md)
+[クイックスタート](#クイックスタート) · [レシピ集](docs/recipes/README.ja.md)
 
 ## クイックスタート
 

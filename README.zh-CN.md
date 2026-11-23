@@ -1,10 +1,17 @@
-# MuseKnock
+<h1 align="center">MuseKnock</h1>
+<p align="center"><strong>将 Webhook 通知送到你的 Muse 侧边对话</strong></p>
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Code-Hex/MuseKnock)
+<p align="center">
+  <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/Code-Hex/MuseKnock"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a>
+</p>
+
+<p align="center"><a href="README.md">English</a> · <a href="README.ja.md">日本語</a> · <strong>简体中文</strong></p>
+
+![Slack 敲响房门，X、LINE 和 Telegram 拿着信封排在门外，Muse 探出头来。](assets/museknock-doorstep.webp)
 
 MuseKnock 通过 Cloudflare Workers 把 Webhook 通知发送到已有的 Muse 侧边对话。你可以在 Muse 中通过 MCP 连接器选择目标对话。关闭电脑后，Worker 会继续投递通知。
 
-[快速开始](#快速开始) · [使用案例](docs/recipes/README.zh-CN.md) · [English](README.md) · [日本語](README.ja.md) · **简体中文**
+[快速开始](#快速开始) · [使用案例](docs/recipes/README.zh-CN.md)
 
 ## 快速开始
 

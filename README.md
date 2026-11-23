@@ -1,10 +1,17 @@
-# MuseKnock
+<h1 align="center">MuseKnock</h1>
+<p align="center"><strong>Bring webhooks into your Muse side chat</strong></p>
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Code-Hex/MuseKnock)
+<p align="center">
+  <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/Code-Hex/MuseKnock"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a>
+</p>
+
+<p align="center"><strong>English</strong> · <a href="README.ja.md">日本語</a> · <a href="README.zh-CN.md">简体中文</a></p>
+
+![Slack knocks on the door as X, LINE, and Telegram wait with envelopes. Muse opens the door.](assets/museknock-doorstep.webp)
 
 MuseKnock delivers webhooks from Cloudflare Workers to an existing Muse side chat. You choose the destination in Muse through an MCP connector. The Worker handles delivery while your computer is off.
 
-[Quick start](#quick-start) · [Recipes](docs/recipes/README.md) · **English** · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
+[Quick start](#quick-start) · [Recipes](docs/recipes/README.md)
 
 ## Quick start
 
