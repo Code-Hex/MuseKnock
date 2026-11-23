@@ -34,7 +34,7 @@ Cloudflare と GitHub のアカウント、認証済みの Muse 端末情報、�
 2. 「既存のセッション `既存のセッションID` を『ビルド通知』として登録し、通知先にして」。ID にはガジェットの `--session-id`、または旧環境の `MUSE_SESSION_ID` の正確な値を使います。`register_side_chat` が登録する名前は MuseKnock 内のものです。未知の ID を使うと初回の投稿で新しいチャットが作られる場合があります。[Gadget SDK のサイドチャット](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. 「テスト通知を1件送り、配信状態を確認して」。Muse は新しい UUID を `requestId` として `send_test_notification` を呼び、返った受付 ID を `get_delivery_status` に渡します。`sent` になったら選んだチャットを開きます。同じテストを再試行するときは同じリクエスト ID を使います。
 
-**4. 送信元サービスを接続します。** Slack、LINE、Twilio、Telegram、企業微信、GitHub、X には[サービス別の設定手順](#サービスを直接接続する)を使います。Bluesky と Discord の設定は [Bluesky を接続する](#bluesky-を接続する)と [Discord を接続する](#discord-を接続する)を参照してください。Bearer ヘッダーを指定できる送信元には、次の汎用 Webhook が使えます。
+**4. 送信元サービスを接続します。** Slack、LINE、Twilio、Telegram、企業微信、GitHub、X には[サービス別の設定手順](#サービスを直接接続する)を使います。Bluesky と Discord の設定は [Bluesky を接続する](#bluesky-を接続する)と [Discord を接続する](#discord-を接続する)を参照してください。Gmail の設定は [Gmail 接続ガイド](docs/gmail.ja.md)を参照してください。Bearer ヘッダーを指定できる送信元には、次の汎用 Webhook が使えます。
 
 送信元の Webhook 設定で、同じ Worker の `/hooks/custom` に `POST` を指定します。ヘッダーを `Authorization: Bearer YOUR_HOOK_TOKEN`、`Content-Type: application/json` とし、例えば `{"message":"ビルドが完了しました"}` を送ると受付 ID が返ります。以降は Muse から配信状態の確認、通知元の一時停止、イベント種別の絞り込みができます。
 
@@ -79,6 +79,10 @@ X Activity API を利用できる承認済みの開発者アプリを用意し�
 2. `POST https://api.x.com/2/activity/subscriptions` に `{"event_type":"post.create","filter":{"user_id":"NUMERIC_X_USER_ID"},"webhook_id":"WEBHOOK_ID"}` を送ります。削除通知も必要なら、`post.delete` でもう一件登録します。[イベント購読の設定](https://docs.x.com/x-api/activity/quickstart)
 
 対象の公開アカウントで投稿し、サイドチャットへの配信を確認します。新しい投稿は投稿 ID、URL、本文の先頭 4,000 文字までを転送します。MCP の絞り込みには `post_create` と `post_delete` を使います。同じ X イベント ID の再送は 7 日間重複排除されます。
+
+## Gmail を接続する
+
+Google Pub/Sub が署名付きの通知を `/hooks/gmail` に直接送ります。Worker が Gmail アカウント 1 件の新着メールを読み取り、選択したサイドチャットに投稿します。初回のみ Cloud Shell で Google 側を設定します。Worker の設定と投稿先の選択が済むと、5 分おきの Cron が監視を開始します。すぐに開始するには Muse から `sync_gmail` を呼び出してください。[Gmail 接続ガイド](docs/gmail.ja.md)
 
 ## Bluesky を接続する
 

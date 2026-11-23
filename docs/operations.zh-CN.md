@@ -82,6 +82,8 @@ registerWebhook(app, 'ci', [
 | 工具 | 参数与结果 | 权限 |
 | --- | --- | --- |
 | `get_setup_status` | 根据 Worker 中的配置返回 `deviceConfigured`、`credentialStorageReady`、`active` 和 `ready`。 | 只读 |
+| `get_gmail_status` | 查看 Gmail 配置状态、监控到期时间、上次同步时间和历史记录缺失情况。 | 只读 |
+| `sync_gmail` | 按需启动或续订 Gmail 监控，并同步一批新邮件。 | 管理 |
 | `send_test_notification` | `requestId`（UUID）。向当前目标对话排入一条固定内容的测试通知，返回回执。来源为 `museknock-test`，事件类型为 `test`。 | 管理 |
 | `list_side_chats` | 列出在 MuseKnock 中注册的名称、会话 ID 和当前目标。 | 只读 |
 | `register_side_chat` | 用 `name`、`sessionId` 新建或更新记录。尚无投递目标时自动选中首次注册的对话。 | 管理 |
