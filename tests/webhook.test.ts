@@ -65,3 +65,12 @@ test('a deployment without an initial chat rejects new webhooks until a chat is 
   assert.equal(response.status, 503)
   assert.match(await response.text(), /register.*side chat/i)
 })
+
+test('the Worker has no browser setup routes', async (t) => {
+  const worker = await startWorker()
+  t.after(() => worker.close())
+  for (const path of ['/', '/setup', '/setup/', '/setup/setup.js']) {
+    const response = await fetch(new URL(path, worker.url), { redirect: 'manual' })
+    assert.equal(response.status, 404, path)
+  }
+})

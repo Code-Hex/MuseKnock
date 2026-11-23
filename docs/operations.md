@@ -4,31 +4,12 @@
 
 ## Authorize a device
 
-If you already have the current device credentials, go straight to the [browser setup](../README.md#quick-start). Use the identity exclusively with this Worker. Get your own SDK token from **Account → SDK tokens** on [Muse Gadgets](https://gadgets.muse.ai/).
+Prepare one device identity exclusively for this Worker. Get the SDK token from **Account → SDK tokens** on [Muse Gadgets](https://gadgets.muse.ai/).
 
-- **Official pairing.** Use the Muse app to pair a dedicated gadget. After stopping its SDK daemon, open your Worker’s `/setup` and select the device’s `pairing.json`. The Linux SDK normally saves it under `/var/lib/musegadget/`. Enter the SDK token used for that pairing separately. [Official pairing instructions](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md#install)
+- **Official pairing.** Pair a dedicated gadget in the Muse app. Stop its SDK daemon before taking the current values from `pairing.json` (normally in `/var/lib/musegadget/` on Linux). Use `node_id`, `refresh_token`, and the SDK token used at pairing. [Official pairing instructions](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md#install)
 - **Community sign-in from a browser.** If you have no paired hardware and are comfortable signing in with a third-party tool, open the Muse Desktop Bridge repository in a personal GitHub Codespace. In its browser terminal run `git checkout 3b6d0e0665d40d5537b21b701c18327e288741d9`, then `python3 muse-auth/muse_auth.py setup`. Complete the prompts for your own account, including OTP or two-factor authentication, and supply your SDK token. Account checkpoints may require the Muse app. This path has not been tested with a live account in Codespaces. [Community sign-in](https://github.com/chaitanyarahalkar/muse-desktop-bridge/blob/3b6d0e0665d40d5537b21b701c18327e288741d9/muse-auth/README.md) · [Open Muse Desktop Bridge in a Codespace](https://codespaces.new/chaitanyarahalkar/muse-desktop-bridge) · [GitHub Codespaces instructions](https://docs.github.com/en/codespaces/developing-in-a-codespace/creating-a-codespace-for-a-repository)
 
-Before downloading from your Codespace, run this command in the same browser terminal. It writes just the three device fields into a private file.
-
-```sh
-python3 - <<'PYTHON'
-import json, os, tempfile
-from pathlib import Path
-
-directory = Path("muse-auth/.state")
-state = json.loads((directory / "state.json").read_text())
-device = {key: state["device"][key] for key in ("device_id", "refresh_token")}
-with tempfile.NamedTemporaryFile(mode="w", dir=directory, delete=False) as out:
-    json.dump({"sdk_token": state["sdk_token"], "device": device}, out)
-os.replace(out.name, directory / "museknock-device.json")
-PYTHON
-```
-
-Download `muse-auth/.state/museknock-device.json` from the browser file explorer and select it in your own Worker’s `/setup`. Keep that file private. The original account sign-in state stays inside the Codespace, which you can delete after the handoff.
-
-Official device pairing requires the Muse app. Authorize the device with Muse before using it to deliver notifications from your Worker.
-
+For community sign-in, open `muse-auth/.state/state.json` in your private Codespace editor and copy only `sdk_token`, `device.device_id`, and `device.refresh_token` to the corresponding Worker secrets in the deployment form. Keep the full file and the account’s session credentials inside your Codespace. Once the Worker has the device credentials, you can delete the Codespace. [Deployment steps](../README.md#quick-start)
 
 ## Trace a notification
 
@@ -47,7 +28,7 @@ A failure known to have occurred before submission can be retried within the del
 
 ## Renew device authorization
 
-After handoff, the Worker saves rotated device credentials in its Durable Object. Keep other executors, local development environments, and Worker deployments off that identity. If Muse revokes the pairing, authorize a fresh device credential, import its current state again, and redeploy with the updated bootstrap secret. Existing registrations remain in the Durable Object.
+After handoff, the Worker saves rotated device credentials in its Durable Object. Keep other executors, local development environments, and Worker deployments off that identity. If Muse revokes the pairing, authorize a fresh device credential, update its Worker secrets in Cloudflare, and deploy the changes. Existing registrations remain in the Durable Object.
 
 The Worker uses the standard device API at `api.muse.ai` and the encrypted Link gateway at `hatch.metaaivm.com`. If you set `MUSE_VM_ID`, check that a lease exists for that exact VM. Otherwise the Worker selects the default leased VM, falling back to the first available lease. [Gadget SDK device API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 
@@ -92,6 +73,8 @@ After redeploying, send notifications to `POST /hooks/ci`. To verify a source-sp
 
 | Tool | Arguments and result | Access |
 | --- | --- | --- |
+| `get_setup_status` | Returns `deviceConfigured`, `active`, and `ready` from local configuration. | Read |
+| `send_test_notification` | `requestId` (UUID). Enqueues a fixed test notification for the active chat and returns its receipt. The source is `museknock-test` and the event type is `test`. | Admin |
 | `list_side_chats` | Lists locally registered names and session IDs, and identifies the active destination. | Read |
 | `register_side_chat` | `name`, `sessionId`. Creates or updates the registration. The first chat becomes active when no destination is configured. | Admin |
 | `set_active_side_chat` | `name`. Selects an existing registration for future notifications. | Admin |
@@ -100,7 +83,7 @@ After redeploying, send notifications to `POST /hooks/ci`. To verify a source-sp
 | `set_source_paused` | `source`, `paused` (boolean). | Admin |
 | `set_event_filter` | `source`, `types` (array of allowed event types). An empty array allows all types. | Admin |
 
-Use 1–64 lowercase ASCII letters, digits, underscores or hyphens for a registration name, starting with a letter or digit. Session IDs are case-sensitive and accept 1–64 ASCII letters, digits or hyphens. Registration records the ID you give it without posting a test message. Use the original gadget session ID to continue an existing chat. A valid legacy `MUSE_SESSION_ID` appears as `default` on upgrade. An authenticated webhook returns HTTP `503` until there is an active destination and the device secrets are configured.
+Registration names are case-sensitive, with 1 to 64 characters after trimming. Start with a Unicode letter or number. You may then use letters, numbers, combining marks, spaces, periods, underscores, and hyphens. Session IDs are case-sensitive and accept 1–64 ASCII letters, digits or hyphens. Registration records the ID you give it without posting a test message. Use the original gadget session ID to continue an existing chat. A valid legacy `MUSE_SESSION_ID` appears as `default` on upgrade. An authenticated webhook returns HTTP `503` until there is an active destination and the device secrets are configured.
 
 To rotate webhook or MCP tokens, update the corresponding Worker secrets in Cloudflare and deploy the changes. Update the sender or connector that uses each token.
 
@@ -110,4 +93,4 @@ With the Muse Gadget SDK checked out at `e17081a45941415d483642dbe21c2a2e6ef85a1
 
 ## Optional CLI setup
 
-With Node.js 22.12 or later, run `npm ci` and `npm run setup -- --pairing /path/to/pairing.json`. For community sign-in use `--device-state /path/to/state.json` instead. Edit the generated `.dev.vars` to complete the device credentials. For an existing chat, replace any generated `MUSE_SESSION_ID` with your existing ID, or omit it and register the chat through MCP. Run `npx wrangler login`, then `npm run deploy:local` to upload the settings. Use `npm test`, `npm run check`, and `npm run deploy -- --dry-run` for local verification. Use separate device credentials for live `npm run dev` sessions. Delivery to a live Muse account has not been verified.
+With Node.js 22.12 or later, run `npm ci` and `npm run setup -- --pairing /path/to/pairing.json`. For community sign-in use `--device-state /path/to/state.json` instead. Edit the generated `.dev.vars` to complete the device credentials. A fresh configuration leaves the chat unselected. Register it through MCP after deployment. An existing `MUSE_SESSION_ID`, including one from a previous `.env.bridge`, is preserved. Run `npx wrangler login`, then `npm run deploy:local` to upload the settings. Use `npm test`, `npm run check`, and `npm run deploy -- --dry-run` for local verification. Use separate device credentials for live `npm run dev` sessions. Delivery to a live Muse account has not been verified.

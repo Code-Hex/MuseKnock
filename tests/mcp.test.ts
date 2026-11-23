@@ -3,6 +3,10 @@ import { test } from 'node:test'
 import { connect } from './mcp-client.ts'
 import { startWorker } from './worker.ts'
 
+function assertRecord(value: unknown): asserts value is Record<string, unknown> {
+  assert.ok(value !== null && typeof value === 'object' && !Array.isArray(value))
+}
+
 test('MCP readers inspect delivery rules; only administrators can change them', async (t) => {
   const worker = await startWorker()
   t.after(() => worker.close())
@@ -13,14 +17,17 @@ test('MCP readers inspect delivery rules; only administrators can change them', 
 
   assert.deepEqual((await reader.listTools()).tools.map((tool) => tool.name).sort(), [
     'get_delivery_status',
+    'get_setup_status',
     'list_side_chats',
     'list_sources',
   ])
   assert.deepEqual((await admin.listTools()).tools.map((tool) => tool.name).sort(), [
     'get_delivery_status',
+    'get_setup_status',
     'list_side_chats',
     'list_sources',
     'register_side_chat',
+    'send_test_notification',
     'set_active_side_chat',
     'set_event_filter',
     'set_source_paused',
@@ -120,6 +127,17 @@ test('an admin registers and switches webhook destinations without a deployment 
       body: 'browser setup complete',
     })
 
+  const setup = () => reader.callTool({ name: 'get_setup_status' })
+  assert.deepEqual((await setup()).structuredContent, {
+    deviceConfigured: true,
+    active: null,
+    ready: false,
+  })
+  const requestId = crypto.randomUUID()
+  const sendTest = { name: 'send_test_notification', arguments: { requestId } }
+  const missingDestination = await admin.callTool(sendTest)
+  assert.equal(missingDestination.isError, true)
+  assert.match(JSON.stringify(missingDestination.content), /register.*side chat/i)
   assert.deepEqual((await list()).structuredContent, { active: null, chats: [] })
   assert.equal((await post()).status, 503)
   const first = { name: 'Builds', sessionId: 'room-1' }
@@ -138,6 +156,31 @@ test('an admin registers and switches webhook destinations without a deployment 
       chats: [first],
     })
   }
+  assert.deepEqual((await setup()).structuredContent, {
+    deviceConfigured: true,
+    active: first.name,
+    ready: true,
+  })
+  assert.equal((await reader.callTool(sendTest)).isError, true)
+  assert.equal(
+    (await admin.callTool({ name: 'send_test_notification', arguments: { requestId: 'invalid' } }))
+      .isError,
+    true,
+  )
+  const receipt = (await admin.callTool(sendTest)).structuredContent
+  assertRecord(receipt)
+  assert.equal(typeof receipt.id, 'string')
+  assert.deepEqual(receipt, { id: receipt.id, state: 'queued', duplicate: false })
+  assert.deepEqual((await admin.callTool(sendTest)).structuredContent, {
+    ...receipt,
+    duplicate: true,
+  })
+  const delivery = (
+    await reader.callTool({ name: 'get_delivery_status', arguments: { id: receipt.id } })
+  ).structuredContent
+  assertRecord(delivery)
+  assert.equal(delivery.source, 'museknock-test')
+  assert.equal(delivery.type, 'test')
   assert.equal((await post()).status, 202)
   const chats = [first, second]
   assert.deepEqual(
@@ -162,4 +205,63 @@ test('an admin registers and switches webhook destinations without a deployment 
     active: updated.name,
     chats: [first, updated],
   })
+})
+
+test('MCP setup checks disclose no device secrets and never send an implicit test', async (t) => {
+  const worker = await startWorker(undefined, { MUSE_REFRESH_TOKEN: '' })
+  t.after(() => worker.close())
+  const url = new URL('/mcp', worker.url)
+  const admin = await connect(url, 'MCP_ADMIN_TOKEN-test')
+  t.after(() => admin.close())
+  assert.deepEqual((await admin.callTool({ name: 'get_setup_status' })).structuredContent, {
+    deviceConfigured: false,
+    active: 'default',
+    ready: false,
+  })
+  const missingDevice = await admin.callTool({
+    name: 'send_test_notification',
+    arguments: { requestId: crypto.randomUUID() },
+  })
+  assert.equal(missingDevice.isError, true)
+  assert.match(JSON.stringify(missingDevice.content), /device.*(secrets|credentials)/i)
+  assert.deepEqual((await admin.callTool({ name: 'list_sources' })).structuredContent, {
+    sources: [],
+  })
+})
+
+test('MCP test notifications respect the source pause and rate limits', async (t) => {
+  const worker = await startWorker()
+  t.after(() => worker.close())
+  const admin = await connect(new URL('/mcp', worker.url), 'MCP_ADMIN_TOKEN-test')
+  t.after(() => admin.close())
+  await admin.callTool({
+    name: 'set_source_paused',
+    arguments: { source: 'museknock-test', paused: true },
+  })
+  const send = () =>
+    admin.callTool({
+      name: 'send_test_notification',
+      arguments: { requestId: crypto.randomUUID() },
+    })
+  for (let i = 0; i < 10; i++) {
+    const receipt = (await send()).structuredContent
+    assertRecord(receipt)
+    assert.equal(receipt.state, 'suppressed')
+  }
+  const limited = await send()
+  assert.equal(limited.isError, true)
+  assert.match(JSON.stringify(limited.content), /rate limit/i)
+})
+
+test('a shared webhook or read-only credential cannot authorize MCP administration', async (t) => {
+  for (const reused of ['HOOK_TOKEN', 'MCP_TOKEN']) {
+    const token = reused + '-test'
+    const worker = await startWorker(undefined, { MCP_ADMIN_TOKEN: token })
+    t.after(() => worker.close())
+    const response = await fetch(new URL('/mcp', worker.url), {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+    })
+    assert.equal(response.status, 503)
+  }
 })

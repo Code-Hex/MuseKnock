@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Hono, type MiddlewareHandler } from 'hono'
 import { bearerAuth } from 'hono/bearer-auth'
 import { timingSafeEqual } from 'hono/utils/buffer'
 import { handleMcp } from './mcp.ts'
@@ -7,10 +7,18 @@ import { inbox, registerWebhook, type WorkerEnv } from './webhook.ts'
 export { Inbox } from './inbox.ts'
 
 const app = new Hono<WorkerEnv>()
-app.get('/', (c) => c.redirect('/setup/'))
 
 const matches = (token: string, secret: string | undefined) =>
   secret ? timingSafeEqual(token, secret) : false
+
+const checkTokenRoles: MiddlewareHandler<WorkerEnv> = async (c, next) => {
+  const tokens = [c.env.HOOK_TOKEN, c.env.MCP_TOKEN, c.env.MCP_ADMIN_TOKEN].filter(Boolean)
+  if (new Set(tokens).size !== tokens.length) {
+    return c.text('Configure distinct webhook, read-only MCP, and admin MCP tokens.', 503)
+  }
+  return next()
+}
+app.use('/hooks/*', checkTokenRoles)
 
 registerWebhook(app, 'default', [
   bearerAuth({ verifyToken: (token, c) => matches(token, c.env.HOOK_TOKEN) }),
@@ -18,6 +26,7 @@ registerWebhook(app, 'default', [
 
 type McpEnv = WorkerEnv & { Variables: { canWrite: boolean } }
 const mcp = new Hono<McpEnv>()
+mcp.use('*', checkTokenRoles)
 mcp.use(
   '*',
   bearerAuth<McpEnv>({

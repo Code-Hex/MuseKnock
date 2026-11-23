@@ -11,7 +11,7 @@ from test_link_client import FakeVm
 from musegadget.noise.envelope import ApplicationResponse, BodyChunk, ServiceFrame
 
 
-async def verify(socket):
+async def verify(socket, events):
     worker = socket.request.path.startswith("/v1/noise")
     if worker:
         assert socket.request.path == "/v1/noise?vm_id=local-vm"
@@ -45,9 +45,7 @@ async def verify(socket):
         _, event = message.split("\n", 1)
         notification = json.loads(event)
         assert notification.pop("id")
-        assert notification == {
-            "source": "default", "type": "notification", "text": '{\n  "id": 9007199254740993\n}\n',
-        }
+        assert notification == next(events)
     else:
         assert message == "event" * 15_000
     assert payload == {
@@ -67,17 +65,23 @@ async def verify(socket):
 
 async def main():
     finished = asyncio.Queue()
+    events = iter([
+        {
+            "source": "default", "type": "notification", "text": '{\n  "id": 9007199254740993\n}\n',
+        },
+        {"source": "museknock-test", "type": "test", "text": "MuseKnock test notification."},
+    ])
 
     async def handle(socket):
         try:
-            await asyncio.wait_for(verify(socket), 10)
+            await asyncio.wait_for(verify(socket, events), 10)
             await finished.put(None)
         except Exception as error:
             await finished.put(error)
 
     async with serve(handle, "127.0.0.1", 0, compression=None) as server:
         print(server.sockets[0].getsockname()[1], flush=True)
-        for _ in range(7):
+        for _ in range(8):
             error = await finished.get()
             if error:
                 raise error

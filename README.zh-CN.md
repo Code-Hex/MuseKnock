@@ -8,28 +8,30 @@ MuseKnock 通过 Cloudflare Workers 把 Webhook 通知发送到已有的 Muse �
 
 ## 快速开始
 
-部署和配置都可以在浏览器中完成。请准备 Cloudflare 和 GitHub 账户、已获授权的 Muse 设备凭据，以及设备向现有对话发消息时使用的确切会话 ID。如果尚未授权设备，请参阅[首次授权设备](docs/operations.zh-CN.md#首次授权设备)。Gadget SDK 令牌仅供你在自己的 Muse 账户中用于个人、非商业用途。[SDK 令牌使用条款](https://gadgets.muse.ai/sdk-terms)
+请准备 Cloudflare 和 GitHub 账户、已获授权的 Muse 设备凭据，以及设备向现有对话发消息时使用的确切会话 ID。SDK 令牌仅供你在自己的 Muse 账户中用于个人、非商业用途。[首次授权设备](docs/operations.zh-CN.md#首次授权设备) · [SDK 令牌使用条款](https://gadgets.muse.ai/sdk-terms)
 
-**1. 部署 Worker。** 点击上方的 **Deploy to Cloudflare**，选择 Worker 名称并保留默认部署命令。部署完成后，在 Worker 的 HTTPS 地址后加上 `/setup` 并打开。该页面可以生成三个独立的访问令牌，也可以在浏览器中从你选择的官方 SDK `pairing.json` 或社区版 `state.json` 中读取设备信息。文件不会上传。
-
-**2. 配置六个运行时密钥。** 在 Cloudflare 的 **Workers & Pages** 中选择你的 Worker，打开 **Settings → Variables and Secrets**，将以下各项以 **Secret** 类型添加，再点击 **Deploy**。请将三个访问令牌保存在密码管理器中。[Cloudflare Worker 密钥指南](https://developers.cloudflare.com/workers/configuration/secrets/)
+**1. 从 Cloudflare 部署。** 点击上方的 **Deploy to Cloudflare**，选择 Worker 名称，在部署表单的 Worker 密钥栏填写以下六项。在密码管理器中为前三项分别生成足够长的随机字母数字串。[Cloudflare 部署按钮说明](https://developers.cloudflare.com/workers/platform/deploy-buttons/#worker-environment-variables-and-secrets)
 
 | Worker 密钥 | 值 |
 | --- | --- |
-| `HOOK_TOKEN` | Webhook 发送端专用的随机令牌 |
-| `MCP_TOKEN` | Muse 只读连接器专用的随机令牌 |
-| `MCP_ADMIN_TOKEN` | 管理目标对话的连接器专用的随机令牌 |
-| `MUSE_NODE_ID` | 已授权设备的节点 ID |
-| `MUSE_REFRESH_TOKEN` | 该设备当前的刷新令牌 |
-| `MUSE_SDK_TOKEN` | 授权设备时使用的 Gadget SDK 令牌。导入官方配对文件时需要单独填写。 |
+| `HOOK_TOKEN` | Webhook 发送端使用的令牌 |
+| `MCP_TOKEN` | Muse 只读连接器使用的令牌 |
+| `MCP_ADMIN_TOKEN` | Muse 管理连接器使用的令牌，可配置目标对话和发送测试通知 |
+| `MUSE_NODE_ID` | 官方 `pairing.json` 中的 `node_id`，或社区版 `state.json` 中的 `device.device_id` |
+| `MUSE_REFRESH_TOKEN` | 官方文件中的 `refresh_token`，或社区版文件中的 `device.refresh_token` |
+| `MUSE_SDK_TOKEN` | 官方设备配对时使用的 SDK 令牌，或社区版文件中的 `sdk_token` |
 
-也可以用密码管理器分别生成三个由字母和数字组成的长随机令牌。交接后，Worker 会刷新设备令牌。如果已有执行器或 SDK 守护进程使用相同的设备身份，请先将其停止并关闭自动重启。
+如果已有执行器或 SDK 守护进程使用相同的设备身份，请先将其停止并关闭自动重启。移交后 Worker 会刷新设备凭据。只将表中指定的三项设备信息复制到 Cloudflare，原始文件和账户凭据应保留在你自己手中。部署 Worker，复制部署完成后显示的 HTTPS 地址。
 
-**3. 在 Muse 中注册已有对话。** 在 **Settings → Connectors** 中为 `https://YOUR-WORKER.workers.dev/mcp` 创建自定义连接器，你的 Worker 的 `/setup` 页面会显示完整的连接器和 Webhook 地址。选择 Bearer 认证，在连接器的令牌栏输入 `MCP_ADMIN_TOKEN`。[Muse 连接器指南](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
+**2. 连接 Muse。** 在 Muse 的 **Settings → Connectors** 中添加一个自定义连接器。在已部署 Worker 的 URL 后加上 `/mcp`，选择 Bearer 身份验证，将 `MCP_ADMIN_TOKEN` 填入令牌栏。[Muse 连接器指南](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
-告诉 Muse：“把会话 ID 为 `已有会话ID` 的侧边对话注册为 `builds`，将它选为通知目标，再显示当前目标。”请填入设备发送消息时传给 `--session-id` 的值，或旧版 MuseKnock 使用的 `MUSE_SESSION_ID`。`builds` 是在 MuseKnock 中使用的名称。MuseKnock 无法按对话标题查询会话 ID，向陌生的 ID 投稿可能会建立新的对话。[Gadget SDK 侧边对话说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
+**3. 通过 Muse 注册对话并测试投递。** 可以按顺序向连接器提出以下请求。
 
-**4. 发送通知。** 在发送服务的 Webhook 设置中，向 Worker 的 `/hooks/default` 发送 `POST`，添加 `Authorization: Bearer YOUR_HOOK_TOKEN` 和 `Content-Type: application/json`，正文可用 `{"message":"构建已完成"}`。测试时加上 `Idempotency-Key: first-knock`。HTTP `202` 会返回回执 ID，你可以用它向 Muse 查询投递状态，并打开所选对话查看消息。使用同一个键重发将返回当前状态。
+1. “检查我的 MuseKnock 配置。” `get_setup_status` 检查 Worker 中的配置。下面的测试消息用于验证实际投递。
+2. “将现有会话 `已有会话ID` 注册为‘构建通知’，并设为通知目标。”请使用设备原来的 `--session-id`，或旧部署中的 `MUSE_SESSION_ID`。`register_side_chat` 保存的是 MuseKnock 中的名称。使用陌生的 ID，首次投递时可能会创建新对话。[Gadget SDK 侧边对话说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
+3. “发送一条测试通知并检查回执。”Muse 使用新的 UUID 作为 `requestId` 调用 `send_test_notification`，然后用返回的回执 ID 调用 `get_delivery_status`。当状态为 `sent` 时，打开所选对话查看消息。重试同一次测试时，请使用相同的请求 ID。
+
+**4. 连接事件来源。** 在发送服务的 Webhook 设置中，将请求设为发往同一 Worker 的 `/hooks/default` 的 `POST`，添加 `Authorization: Bearer YOUR_HOOK_TOKEN` 和 `Content-Type: application/json`。发送 `{"message":"构建完成"}` 等正文后会收到回执 ID。之后可以在 Muse 中查看投递状态、暂停来源或筛选事件类型。
 
 ## 切换目标对话
 

@@ -15,6 +15,8 @@ type DeliveryControls = Pick<
   | 'listSideChats'
   | 'registerSideChat'
   | 'setActiveSideChat'
+  | 'getSetupStatus'
+  | 'sendTestNotification'
 >
 
 const name = z.string().regex(identifier)
@@ -32,6 +34,10 @@ function result(data: object): CallToolResult {
   return { structuredContent: { ...data }, content: [{ type: 'text', text: JSON.stringify(data) }] }
 }
 
+function failure(text: string): CallToolResult {
+  return { isError: true, content: [{ type: 'text', text }] }
+}
+
 export async function handleMcp(
   request: Request,
   inbox: DeliveryControls,
@@ -46,6 +52,16 @@ export async function handleMcp(
   }
 
   const server = new McpServer({ name: 'museknock', version: '0.1.0' })
+  server.registerTool(
+    'get_setup_status',
+    {
+      description:
+        'Check whether the Worker has device credentials in the expected format and an active destination. Ready means a test can be queued. This check makes no request to Muse.',
+      annotations: readOnly,
+    },
+    async () => result(await inbox.getSetupStatus()),
+  )
+
   server.registerTool(
     'list_sources',
     {
@@ -76,17 +92,45 @@ export async function handleMcp(
     },
     async ({ id }) => {
       const delivery = await inbox.status(id)
-      if (!delivery) {
-        return {
-          isError: true,
-          content: [{ type: 'text', text: 'No delivery found for this receipt ID.' }],
-        }
-      }
+      if (!delivery) return failure('No delivery found for this receipt ID.')
       return result(delivery)
     },
   )
 
   if (canWrite) {
+    server.registerTool(
+      'send_test_notification',
+      {
+        description:
+          'When the user asks for a test, queue a fixed test notification to the active side chat. Use get_delivery_status with the returned receipt ID to check delivery.',
+        inputSchema: {
+          requestId: z
+            .uuid()
+            .describe('Generate a UUID for each new test and reuse it when retrying that test.'),
+        },
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+      },
+      async ({ requestId }) => {
+        const receipt = await inbox.sendTestNotification(requestId)
+        if ('missingDevice' in receipt)
+          return failure('Configure valid Muse device credentials in the Worker secrets first.')
+        if ('noDestination' in receipt)
+          return failure(
+            'Register a destination with register_side_chat first, using an existing side chat ID.',
+          )
+        if ('limited' in receipt)
+          return failure(
+            'Test notification rate limit reached. Retry in 60 seconds with the same request ID.',
+          )
+        return result(receipt)
+      },
+    )
+
     server.registerTool(
       'register_side_chat',
       {
@@ -115,10 +159,7 @@ export async function handleMcp(
       async ({ name }) => {
         const destinations = await inbox.setActiveSideChat(name)
         if (destinations) return result(destinations)
-        return {
-          isError: true,
-          content: [{ type: 'text', text: 'No registered side chat has that name.' }],
-        }
+        return failure('No registered side chat has that name.')
       },
     )
 

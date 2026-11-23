@@ -4,31 +4,12 @@
 
 ## 初回の端末認証
 
-認証済み端末の最新情報が手元にあれば、[ブラウザでのセットアップ](../README.ja.md#クイックスタート)に進みます。この端末 ID は Worker 専用にしてください。自分の SDK トークンは [Muse Gadgets](https://gadgets.muse.ai/) の **Account → SDK tokens** で取得できます。
+Worker 専用の端末 ID を1つ用意してください。自分の SDK トークンは [Muse Gadgets](https://gadgets.muse.ai/) の **Account → SDK tokens** で取得できます。
 
-- **公式のペアリング。** 専用のガジェットを Muse アプリでペアリングします。SDK デーモンを停止してから、自分の Worker の `/setup` でその端末の `pairing.json` を選びます。Linux SDK の標準の保存先は `/var/lib/musegadget/` です。ペアリングに使った SDK トークンは別途入力します。[公式のペアリング手順](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md#install)
+- **公式のペアリング。** 専用のガジェットを Muse アプリでペアリングし、SDK デーモンを停止してから `pairing.json` の最新値を確認します。Linux SDK の標準の保存先は `/var/lib/musegadget/` です。`node_id`、`refresh_token`、ペアリングに使った SDK トークンを用意します。[公式のペアリング手順](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md#install)
 - **ブラウザからコミュニティ版で認証。** ペアリング済み機器がなく、サードパーティ製ツールでのサインインを選ぶ場合は、自分専用の GitHub Codespace で Muse Desktop Bridge リポジトリを開きます。ブラウザ内の端末で `git checkout 3b6d0e0665d40d5537b21b701c18327e288741d9`、続いて `python3 muse-auth/muse_auth.py setup` を実行します。自分のアカウントでワンタイムコードや二要素認証などの手順を完了し、SDK トークンを入力します。Muse から本人確認を求められた場合は Muse アプリが必要になることがあります。Codespaces 上での実アカウント認証は未検証です。[コミュニティ版の認証手順](https://github.com/chaitanyarahalkar/muse-desktop-bridge/blob/3b6d0e0665d40d5537b21b701c18327e288741d9/muse-auth/README.md) · [Muse Desktop Bridge の Codespace を開く](https://codespaces.new/chaitanyarahalkar/muse-desktop-bridge) · [GitHub Codespaces の手順](https://docs.github.com/en/codespaces/developing-in-a-codespace/creating-a-codespace-for-a-repository)
 
-Codespace を使った場合は、ダウンロードの前に同じブラウザ内の端末で次のコマンドを実行します。端末情報の3項目だけが、所有者専用のファイルに保存されます。
-
-```sh
-python3 - <<'PYTHON'
-import json, os, tempfile
-from pathlib import Path
-
-directory = Path("muse-auth/.state")
-state = json.loads((directory / "state.json").read_text())
-device = {key: state["device"][key] for key in ("device_id", "refresh_token")}
-with tempfile.NamedTemporaryFile(mode="w", dir=directory, delete=False) as out:
-    json.dump({"sdk_token": state["sdk_token"], "device": device}, out)
-os.replace(out.name, directory / "museknock-device.json")
-PYTHON
-```
-
-ブラウザのファイル一覧から `muse-auth/.state/museknock-device.json` をダウンロードし、自分の Worker の `/setup` で選びます。このファイルは非公開で保管してください。元のアカウント認証情報は Codespace 内に残ります。端末情報の移行後、Codespace は削除できます。
-
-公式の端末ペアリングには Muse アプリを使います。Deploy to Cloudflare ボタンで作成するのは Worker で、端末の認証は Muse 側で行います。
-
+コミュニティ版を使った場合は、自分専用の Codespace のエディターで `muse-auth/.state/state.json` を開き、`sdk_token`、`device.device_id`、`device.refresh_token` の3項目だけを Cloudflare のデプロイ画面の対応するシークレット欄に転記します。ファイル本体とアカウントのセッション情報は Codespace 内に留めます。端末情報を引き渡したら Codespace は削除できます。[デプロイの手順](../README.ja.md#クイックスタート)
 
 ## 届かない通知を調べる
 
@@ -47,7 +28,7 @@ Muse に「受付 ID … の配信状態を調べて」と頼みます。コネ�
 
 ## 端末認証を更新する
 
-移行後は Worker が更新した端末認証情報を Durable Object に保存します。この ID は他の executor、ローカル開発環境、別の Worker と共有しないでください。Muse がペアリングを失効させた場合は、改めて端末を認証し、最新の状態を取り込んだうえで初期認証情報を再デプロイします。投稿先の登録は Durable Object に残ります。
+移行後は Worker が更新した端末認証情報を Durable Object に保存します。この ID は他の executor、ローカル開発環境、別の Worker と共有しないでください。Muse がペアリングを失効させた場合は、改めて端末を認証し、Cloudflare の Worker シークレットに最新値を設定してデプロイします。投稿先の登録は Durable Object に残ります。
 
 Worker は標準の端末 API `api.muse.ai` と暗号化された Link ゲートウェイ `hatch.metaaivm.com` を使用します。`MUSE_VM_ID` を指定した場合は、その VM が端末に貸与されていることを確認してください。指定がなければ既定の貸与済み VM を選び、既定がなければ一覧の先頭を使います。[Gadget SDK の端末 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 
@@ -92,6 +73,8 @@ registerWebhook(app, 'ci', [
 
 | ツール | 引数 | 権限 |
 | --- | --- | --- |
+| `get_setup_status` | Worker 内の設定から `deviceConfigured`、`active`、`ready` を返します。 | 閲覧 |
+| `send_test_notification` | `requestId`（UUID）。選択中の投稿先に固定文のテスト通知を登録し、受付 ID を返します。通知元は `museknock-test`、イベント種別は `test` です。 | 管理 |
 | `list_side_chats` | MuseKnock の登録名とセッション ID の一覧、選択中の投稿先を返します。 | 閲覧 |
 | `register_side_chat` | `name` と `sessionId` を登録・更新します。投稿先が未設定なら最初の登録を選びます。 | 管理 |
 | `set_active_side_chat` | `name` で登録済みのチャットを選び、次の通知から適用します。 | 管理 |
@@ -100,7 +83,7 @@ registerWebhook(app, 'ci', [
 | `set_source_paused` | `source`、`paused`（真偽値） | 管理 |
 | `set_event_filter` | `source`、`types`（許可する種別の配列）。空配列は全種別を許可します。 | 管理 |
 
-登録名は1〜64文字で、英小文字または数字で始め、以降は英小文字・数字・アンダースコア・ハイフンを使えます。セッション ID は大文字と小文字を区別し、1〜64文字の半角英数字とハイフンが使えます。登録処理は指定された ID を保存し、テスト投稿は行いません。既存のチャットを使うには、ガジェットが投稿に使ったセッション ID を指定してください。旧設定の有効な `MUSE_SESSION_ID` は `default` として引き継ぎます。端末のシークレットまたは投稿先が未設定のとき、認証済み Webhook は HTTP `503` を返します。
+登録名は前後の空白を除いて1〜64文字で、大文字と小文字を区別します。先頭は Unicode の文字または数字、以降は文字・数字・結合文字・半角スペース・ピリオド・アンダースコア・ハイフンを使えます。セッション ID は大文字と小文字を区別し、1〜64文字の半角英数字とハイフンが使えます。登録処理は指定された ID を保存し、テスト投稿は行いません。既存のチャットを使うには、ガジェットが投稿に使ったセッション ID を指定してください。旧設定の有効な `MUSE_SESSION_ID` は `default` として引き継ぎます。端末のシークレットまたは投稿先が未設定のとき、認証済み Webhook は HTTP `503` を返します。
 
 Webhook や MCP のトークンを更新するときは、Cloudflare で該当する Worker シークレットを変更してデプロイします。その値を使う送信元やコネクタにも新しいトークンを設定してください。
 
@@ -110,4 +93,4 @@ Muse Gadget SDK のコミット `e17081a45941415d483642dbe21c2a2e6ef85a13` を�
 
 ## CLI でセットアップする場合
 
-Node.js 22.12 以降で `npm ci`、`npm run setup -- --pairing /path/to/pairing.json` を実行します。コミュニティ版は代わりに `--device-state /path/to/state.json` を使います。生成された `.dev.vars` で端末の認証情報を補います。既存のチャットを使う場合、生成済みの `MUSE_SESSION_ID` はそのチャットの ID に変更するか、設定から外して MCP から登録してください。`npx wrangler login` の後に `npm run deploy:local` を実行すると、この設定をアップロードできます。検証には `npm test`、`npm run check`、`npm run deploy -- --dry-run` を使います。`npm run dev` で実際に投稿するときは別の端末 ID を使用してください。実際の Muse アカウントへの投稿は未検証です。
+Node.js 22.12 以降で `npm ci`、`npm run setup -- --pairing /path/to/pairing.json` を実行します。コミュニティ版は代わりに `--device-state /path/to/state.json` を使います。生成された `.dev.vars` で端末の認証情報を補います。新規設定では投稿先は未選択です。デプロイ後に MCP から登録してください。旧環境の `.env.bridge` を含め、既存の `MUSE_SESSION_ID` は引き継ぎます。`npx wrangler login` の後に `npm run deploy:local` を実行すると、この設定をアップロードできます。検証には `npm test`、`npm run check`、`npm run deploy -- --dry-run` を使います。`npm run dev` で実際に投稿するときは別の端末 ID を使用してください。実際の Muse アカウントへの投稿は未検証です。

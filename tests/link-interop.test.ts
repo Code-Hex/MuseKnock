@@ -133,7 +133,25 @@ test(
       repeated = await duplicate.json()
     } while (['queued', 'sending'].includes(repeated.state) && Date.now() < deadline)
     assert.deepEqual(repeated, { id: receipt.id, duplicate: true, state: 'sent' })
-    assert.deepEqual(accountRequests, ['/device_token/refresh', '/fetch_vms'])
+    const testPost = await admin.callTool({
+      name: 'send_test_notification',
+      arguments: { requestId: crypto.randomUUID() },
+    })
+    const testReceipt = testPost.structuredContent
+    assert.ok(testReceipt && typeof testReceipt === 'object' && 'id' in testReceipt)
+    const until = Date.now() + 10_000
+    let state: unknown
+    do {
+      await delay(50)
+      const lookup = await admin.callTool({
+        name: 'get_delivery_status', arguments: { id: testReceipt.id },
+      })
+      const status = lookup.structuredContent
+      assert.ok(status && typeof status === 'object' && 'state' in status)
+      state = status.state
+    } while ((state === 'queued' || state === 'sending') && Date.now() < until)
+    assert.equal(state, 'sent')
+    assert.deepEqual(accountRequests, ['/device_token/refresh', '/fetch_vms', '/fetch_vms'])
     assert.equal((await exited)[0], 0)
   },
 )

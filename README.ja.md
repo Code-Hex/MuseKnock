@@ -8,28 +8,30 @@ MuseKnock は Cloudflare Workers で Webhook を受け取り、既存の Muse �
 
 ## クイックスタート
 
-デプロイと設定はブラウザで完結します。Cloudflare と GitHub のアカウント、認証済みの Muse 端末情報、ガジェットが既存のチャットで使っている正確なセッション ID を用意してください。端末をまだ認証していない場合は、[初回の端末認証](docs/operations.ja.md#初回の端末認証)を参照してください。Gadget SDK トークンは自分の Muse アカウントでの個人・非商用利用が対象です。[SDK トークンの利用条件](https://gadgets.muse.ai/sdk-terms)
+Cloudflare と GitHub のアカウント、認証済みの Muse 端末情報、ガジェットが既存のチャットで使っているセッション ID を用意します。SDK トークンは自分の Muse アカウントでの個人・非商用利用が対象です。[初回の端末認証](docs/operations.ja.md#初回の端末認証)・[SDK トークンの利用条件](https://gadgets.muse.ai/sdk-terms)
 
-**1. Worker をデプロイします。** 上の **Deploy to Cloudflare** を押し、Worker 名を選びます。デプロイコマンドは初期値のままで進めてください。発行された Worker の HTTPS URL に `/setup` を付けて開くと、3種類のアクセストークンを生成できます。公式 SDK の `pairing.json` またはコミュニティ版の `state.json` を選ぶと、ブラウザ内で端末情報を読み取ります。ファイルは送信されません。
-
-**2. Worker のシークレットを6個設定します。** Cloudflare の **Workers & Pages → 対象の Worker → Settings → Variables and Secrets** で、下の値をそれぞれ **Secret** として追加し、**Deploy** を押します。3種類のアクセストークンはパスワードマネージャーに保存してください。[Cloudflare のシークレット設定](https://developers.cloudflare.com/workers/configuration/secrets/)
+**1. Cloudflare からデプロイします。** 上の **Deploy to Cloudflare** を押し、Worker 名を選び、デプロイ画面の Worker シークレット欄に次の6項目を入力します。最初の3項目にはパスワードマネージャーで生成した、十分長いランダムな英数字をそれぞれ別に使います。[Cloudflare のデプロイボタンの仕様](https://developers.cloudflare.com/workers/platform/deploy-buttons/#worker-environment-variables-and-secrets)
 
 | シークレット | 設定する値 |
 | --- | --- |
-| `HOOK_TOKEN` | Webhook 送信元専用のランダムなトークン |
-| `MCP_TOKEN` | 閲覧用の Muse コネクタ専用のランダムなトークン |
-| `MCP_ADMIN_TOKEN` | 投稿先を管理するコネクタ専用のランダムなトークン |
-| `MUSE_NODE_ID` | 認証済み端末のノード ID |
-| `MUSE_REFRESH_TOKEN` | その端末の現在のリフレッシュトークン |
-| `MUSE_SDK_TOKEN` | その端末の認証に使った Gadget SDK トークン。公式のペアリングファイルを使う場合は別途入力します。 |
+| `HOOK_TOKEN` | Webhook 送信元用のトークン |
+| `MCP_TOKEN` | Muse の閲覧用コネクタのトークン |
+| `MCP_ADMIN_TOKEN` | 投稿先の設定やテスト送信に使う Muse の管理用トークン |
+| `MUSE_NODE_ID` | 公式の `pairing.json` なら `node_id`、コミュニティ版の `state.json` なら `device.device_id` |
+| `MUSE_REFRESH_TOKEN` | 公式なら `refresh_token`、コミュニティ版なら `device.refresh_token` |
+| `MUSE_SDK_TOKEN` | 公式ならペアリングに使った SDK トークン、コミュニティ版なら `sdk_token` |
 
-アクセストークンは、パスワードマネージャーで長いランダムな英数字を3個生成してもかまいません。移行後は Worker が端末トークンを更新します。同じ端末 ID を使う executor や SDK デーモンが稼働中なら、引き渡し前に停止し、自動起動を解除してください。
+引き渡し後は Worker が端末の認証情報を更新します。同じ端末 ID を使う executor や SDK デーモンが稼働中なら、事前に停止して自動起動を解除します。Cloudflare に転記する端末情報は表の3項目だけです。元のファイルとアカウントの認証情報は手元で保管してください。Worker をデプロイしたら、表示された HTTPS URL をコピーします。
 
-**3. Muse から既存のチャットを登録します。** **Settings → Connectors** でカスタムコネクタを作り、URL に `https://YOUR-WORKER.workers.dev/mcp`、認証方式に Bearer を指定します。自分の Worker の正確な接続 URL は `/setup` に表示されます。コネクタのトークン欄に `MCP_ADMIN_TOKEN` を入力してください。[Muse コネクタの設定手順](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
+**2. Muse にコネクタを追加します。** Muse の **Settings → Connectors** でカスタムコネクタを1つ追加します。デプロイ先の URL の末尾に `/mcp` を付け、認証方式に Bearer を選び、トークン欄に `MCP_ADMIN_TOKEN` を入力します。[Muse コネクタの設定手順](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
-Muse に「セッション ID が `既存のセッションID` のサイドチャットを `builds` として登録して。通知先に選んで、現在の投稿先を表示して」と頼みます。セッション ID には、ガジェットが投稿時に `--session-id` に指定した値、または旧 MuseKnock の `MUSE_SESSION_ID` を使います。`builds` は MuseKnock 内の登録名です。会話タイトルからセッション ID を検索する機能はなく、未知の ID に投稿すると新しいチャットが作られる場合があります。[Gadget SDK のサイドチャット](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
+**3. Muse に投稿先の登録とテストを頼みます。** 次の順に依頼してください。
 
-**4. 通知を送ります。** 送信元サービスの Webhook 設定で、Worker の `/hooks/default` 宛てに `POST` を指定します。ヘッダーは `Authorization: Bearer YOUR_HOOK_TOKEN` と `Content-Type: application/json`、本文は例えば `{"message":"ビルドが完了しました"}` です。テストには `Idempotency-Key: first-knock` を設定してください。HTTP `202` と受付 ID が返ったら、Muse にその ID の配信状態を尋ね、投稿先のチャットを開きます。同じキーで再送すると現在の配信状態が返ります。
+1. 「MuseKnock の設定を確認して」。`get_setup_status` は Worker 内の設定を確認します。実際に届くかはテスト投稿で確かめます。
+2. 「既存のセッション `既存のセッションID` を『ビルド通知』として登録し、通知先にして」。ID にはガジェットの `--session-id`、または旧環境の `MUSE_SESSION_ID` の正確な値を使います。`register_side_chat` が登録する名前は MuseKnock 内のものです。未知の ID を使うと初回の投稿で新しいチャットが作られる場合があります。[Gadget SDK のサイドチャット](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
+3. 「テスト通知を1件送り、配信状態を確認して」。Muse は新しい UUID を `requestId` として `send_test_notification` を呼び、返った受付 ID を `get_delivery_status` に渡します。`sent` になったら選んだチャットを開きます。同じテストを再試行するときは同じリクエスト ID を使います。
+
+**4. 送信元サービスを接続します。** 送信元の Webhook 設定で、同じ Worker の `/hooks/default` に `POST` を指定します。ヘッダーを `Authorization: Bearer YOUR_HOOK_TOKEN`、`Content-Type: application/json` とし、例えば `{"message":"ビルドが完了しました"}` を送ると受付 ID が返ります。以降は Muse から配信状態の確認、通知元の一時停止、イベント種別の絞り込みができます。
 
 ## 投稿先を切り替える
 

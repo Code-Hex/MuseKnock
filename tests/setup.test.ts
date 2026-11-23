@@ -30,7 +30,7 @@ test('setup prepares only Worker secrets and preserves an existing side chat', a
   }
   assert.equal(new Set([config.HOOK_TOKEN, config.MCP_TOKEN, config.MCP_ADMIN_TOKEN]).size, 3)
   assert.equal(config.MUSE_REFRESH_TOKEN, '')
-  assert.match(config.MUSE_SESSION_ID!, /^[a-f0-9-]{36}$/)
+  assert.equal(config.MUSE_SESSION_ID, undefined)
   assert.equal(config.BRIDGE_TOKEN, undefined)
   await assert.rejects(stat(join(cwd, '.env.bridge')), { code: 'ENOENT' })
   assert.equal((await stat(vars)).mode & 0o777, 0o600)

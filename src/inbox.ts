@@ -31,7 +31,10 @@ export class Inbox extends DurableObject<MuseBindings> {
   constructor(ctx: DurableObjectState, env: MuseBindings) {
     super(ctx, env)
     const session = env.MUSE_SESSION_ID
-    this.queue = new DeliveryQueue(ctx.storage, session && sideChatId.test(session) ? session : null)
+    this.queue = new DeliveryQueue(
+      ctx.storage,
+      session && sideChatId.test(session) ? session : null,
+    )
     // A deployment can inherit queued events from the former polling bridge.
     ctx.blockConcurrencyWhile(async () => {
       const next = this.queue.nextWakeAt()
@@ -109,6 +112,22 @@ export class Inbox extends DurableObject<MuseBindings> {
     } finally {
       this.queue.finish(event.id, attempt, outcome)
     }
+  }
+
+  getSetupStatus() {
+    const deviceConfigured = museDevice(this.env) !== null
+    const { active } = this.queue.listSideChats()
+    return { deviceConfigured, active, ready: deviceConfigured && active !== null }
+  }
+
+  async sendTestNotification(requestId: string) {
+    if (!museDevice(this.env)) return { missingDevice: true } as const
+    return this.enqueue({
+      key: requestId.toLowerCase(),
+      source: 'museknock-test',
+      type: 'test',
+      text: 'MuseKnock test notification.',
+    })
   }
 
   listSideChats() {

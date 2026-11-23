@@ -4,31 +4,12 @@
 
 ## 首次授权设备
 
-如果已有当前有效的设备凭据，请直接进入[浏览器配置步骤](../README.zh-CN.md#快速开始)。让此 Worker 独占该设备身份。在 [Muse Gadgets](https://gadgets.muse.ai/) 的 **Account → SDK tokens** 中获取本人的 SDK 令牌。
+请为此 Worker 准备一个专用设备身份。前往 [Muse Gadgets](https://gadgets.muse.ai/) 的 **Account → SDK tokens** 获取自己的 SDK 令牌。
 
-- **官方配对。** 在 Muse 应用中为专用设备配对。停止 SDK 守护进程后，在自己的 Worker 的 `/setup` 页面选择设备的 `pairing.json`。Linux SDK 通常将其保存在 `/var/lib/musegadget/` 下。请另外填写配对使用的 SDK 令牌。[官方配对指南](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md#install)
+- **官方配对。** 在 Muse 应用中为专用设备配对，然后停止 SDK 守护进程。从 `pairing.json` 获取当前的 `node_id` 和 `refresh_token`，并准备配对时使用的 SDK 令牌。Linux SDK 通常将该文件保存在 `/var/lib/musegadget/`。[官方配对指南](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md#install)
 - **通过浏览器使用社区工具登录。** 如果没有配对过的硬件，且愿意使用第三方工具登录，可以在自己的 GitHub Codespace 中打开 Muse Desktop Bridge 仓库。在浏览器的终端中运行 `git checkout 3b6d0e0665d40d5537b21b701c18327e288741d9`，再运行 `python3 muse-auth/muse_auth.py setup`。按提示使用自己的账户登录，完成一次性验证码或双重认证，并提供本人的 SDK 令牌。遇到账户验证时，可能仍需在 Muse 应用中操作。尚未使用真实账户在 Codespaces 中验证该登录流程。[社区登录说明](https://github.com/chaitanyarahalkar/muse-desktop-bridge/blob/3b6d0e0665d40d5537b21b701c18327e288741d9/muse-auth/README.md) · [在 Codespace 中打开 Muse Desktop Bridge](https://codespaces.new/chaitanyarahalkar/muse-desktop-bridge) · [GitHub Codespaces 说明](https://docs.github.com/en/codespaces/developing-in-a-codespace/creating-a-codespace-for-a-repository)
 
-如果使用 Codespace，下载文件前请在同一个浏览器终端运行以下命令。它只将三个设备字段写入仅所有者可读写的文件。
-
-```sh
-python3 - <<'PYTHON'
-import json, os, tempfile
-from pathlib import Path
-
-directory = Path("muse-auth/.state")
-state = json.loads((directory / "state.json").read_text())
-device = {key: state["device"][key] for key in ("device_id", "refresh_token")}
-with tempfile.NamedTemporaryFile(mode="w", dir=directory, delete=False) as out:
-    json.dump({"sdk_token": state["sdk_token"], "device": device}, out)
-os.replace(out.name, directory / "museknock-device.json")
-PYTHON
-```
-
-在浏览器的文件列表中下载 `muse-auth/.state/museknock-device.json`，在自己的 Worker 的 `/setup` 页面选择该文件，并妥善保管。原始账户登录信息留在 Codespace 内，完成移交后即可删除 Codespace。
-
-官方设备配对需通过 Muse 应用完成。Deploy to Cloudflare 按钮负责创建 Worker，设备授权则由 Muse 管理。
-
+使用社区登录时，在你自己的私有 Codespace 编辑器中打开 `muse-auth/.state/state.json`，只把 `sdk_token`、`device.device_id` 和 `device.refresh_token` 复制到 Cloudflare 部署表单中对应的密钥栏。将原始文件和账户会话凭据保留在 Codespace 中。完成设备凭据移交后即可删除 Codespace。[部署步骤](../README.zh-CN.md#快速开始)
 
 ## 排查未收到的通知
 
@@ -47,7 +28,7 @@ PYTHON
 
 ## 更新设备授权
 
-交接后，Worker 会将轮换后的设备凭据保存在 Durable Object 中。请勿在其他执行器、本地开发环境或其他 Worker 部署中使用同一设备身份。如果 Muse 撤销了配对，请重新授权设备凭据，重新导入最新状态，并使用更新后的初始密钥重新部署。已注册的目标对话保存在 Durable Object 中。
+交接后，Worker 会将轮换后的设备凭据保存在 Durable Object 中。请勿在其他执行器、本地开发环境或其他 Worker 部署中使用同一设备身份。如果 Muse 撤销了配对，请重新授权设备凭据，在 Cloudflare 中更新相应的 Worker 密钥并重新部署。已注册的目标对话保存在 Durable Object 中。
 
 Worker 使用标准设备 API `api.muse.ai` 和加密的 Link 网关 `hatch.metaaivm.com`。如果设置了 `MUSE_VM_ID`，请确认该 VM 已分配给设备。未指定时，Worker 会选择默认的已分配 VM，如果没有默认项则选择列表中的第一项。[Gadget SDK 设备 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 
@@ -92,6 +73,8 @@ registerWebhook(app, 'ci', [
 
 | 工具 | 参数与结果 | 权限 |
 | --- | --- | --- |
+| `get_setup_status` | 根据 Worker 中的配置返回 `deviceConfigured`、`active` 和 `ready`。 | 只读 |
+| `send_test_notification` | `requestId`（UUID）。向当前目标对话排入一条固定内容的测试通知，返回回执。来源为 `museknock-test`，事件类型为 `test`。 | 管理 |
 | `list_side_chats` | 列出在 MuseKnock 中注册的名称、会话 ID 和当前目标。 | 只读 |
 | `register_side_chat` | 用 `name`、`sessionId` 新建或更新记录。尚无投递目标时自动选中首次注册的对话。 | 管理 |
 | `set_active_side_chat` | 通过 `name` 选择已有记录，作为之后接收通知的目标。 | 管理 |
@@ -100,7 +83,7 @@ registerWebhook(app, 'ci', [
 | `set_source_paused` | `source`、`paused`（布尔值）。 | 管理 |
 | `set_event_filter` | `source`、`types`（允许的事件类型数组）。空数组允许所有类型。 | 管理 |
 
-注册名为 1 至 64 个字符，以 ASCII 小写字母或数字开头，后续还允许下划线和连字符。会话 ID 区分大小写，允许使用 1 至 64 个 ASCII 字母、数字或连字符。注册时只保存你提供的 ID，不会发送测试消息。要继续原有对话，请使用设备发消息时使用的会话 ID。升级时，有效的旧版 `MUSE_SESSION_ID` 将显示为 `default`。设备密钥不全或未选择投递目标时，已通过身份验证的 Webhook 请求将收到 HTTP `503`。
+注册名区分大小写，去除首尾空格后长度为 1 至 64 个字符。首位使用 Unicode 字母或数字，之后还允许组合标记、空格、英文句点、下划线和连字符。会话 ID 区分大小写，允许使用 1 至 64 个 ASCII 字母、数字或连字符。注册时只保存你提供的 ID，不会发送测试消息。要继续原有对话，请使用设备发消息时使用的会话 ID。升级时，有效的旧版 `MUSE_SESSION_ID` 将显示为 `default`。设备密钥不全或未选择投递目标时，已通过身份验证的 Webhook 请求将收到 HTTP `503`。
 
 轮换 Webhook 或 MCP 令牌时，在 Cloudflare 更新对应的 Worker 密钥并部署，再更新使用该令牌的发送端或连接器。
 
@@ -110,4 +93,4 @@ registerWebhook(app, 'ci', [
 
 ## 可选的 CLI 配置
 
-在 Node.js 22.12 或更高版本中，运行 `npm ci` 和 `npm run setup -- --pairing /path/to/pairing.json`。使用社区登录状态时将参数换为 `--device-state /path/to/state.json`。编辑生成的 `.dev.vars`，补全设备凭据。若要使用已有对话，请把生成的 `MUSE_SESSION_ID` 改为原有的 ID，或者省略该设置，改由 MCP 注册对话。运行 `npx wrangler login` 后，用 `npm run deploy:local` 上传设置。使用 `npm test`、`npm run check` 和 `npm run deploy -- --dry-run` 进行本地验证。在 `npm run dev` 中发送真实消息时，请使用单独的设备凭据。尚未验证向真实 Muse 账户投递。
+在 Node.js 22.12 或更高版本中，运行 `npm ci` 和 `npm run setup -- --pairing /path/to/pairing.json`。使用社区登录状态时将参数换为 `--device-state /path/to/state.json`。编辑生成的 `.dev.vars`，补全设备凭据。新配置不会预选目标对话。部署后请通过 MCP 注册。已有的 `MUSE_SESSION_ID` 会予以保留，包括旧版 `.env.bridge` 中的设置。运行 `npx wrangler login` 后，用 `npm run deploy:local` 上传设置。使用 `npm test`、`npm run check` 和 `npm run deploy -- --dry-run` 进行本地验证。在 `npm run dev` 中发送真实消息时，请使用单独的设备凭据。尚未验证向真实 Muse 账户投递。

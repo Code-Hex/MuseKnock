@@ -3,8 +3,6 @@
   "name": "museknock",
   "main": "src/index.ts",
   "compatibility_date": "2026-11-19",
-  "build": { "command": "npm run build:setup" },
-  "assets": { "directory": "./dist/setup-assets" },
   "durable_objects": {
     "bindings": [{ "name": "INBOX", "class_name": "Inbox" }]
   },
