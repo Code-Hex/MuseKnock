@@ -16,8 +16,6 @@ type DeliveryControls = Pick<
   | 'registerSideChat'
   | 'setActiveSideChat'
   | 'getSetupStatus'
-  | 'getGmailStatus'
-  | 'syncGmail'
   | 'sendTestNotification'
 >
 
@@ -65,15 +63,6 @@ export async function handleMcp(
   )
 
   server.registerTool(
-    'get_gmail_status',
-    {
-      description: 'Inspect Gmail configuration, the saved history cursor, watch expiration, last sync, and latest history gap.',
-      annotations: readOnly,
-    },
-    async () => result(await inbox.getGmailStatus()),
-  )
-
-  server.registerTool(
     'list_sources',
     {
       description:
@@ -109,18 +98,6 @@ export async function handleMcp(
   )
 
   if (canWrite) {
-    server.registerTool(
-      'sync_gmail',
-      {
-        description: 'Start or renew the configured Gmail watch and sync new mail to the active side chat. The first call starts at the current mailbox position.',
-        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
-      },
-      async () => {
-        const sync = await inbox.syncGmail()
-        return sync.ok ? result(await inbox.getGmailStatus()) : failure(sync.error)
-      },
-    )
-
     server.registerTool(
       'send_test_notification',
       {

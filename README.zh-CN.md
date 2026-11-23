@@ -34,7 +34,7 @@ MuseKnock 通过 Cloudflare Workers 把 Webhook 通知发送到已有的 Muse �
 2. “将现有会话 `已有会话ID` 注册为‘构建通知’，并设为通知目标。”请使用设备原来的 `--session-id`，或旧部署中的 `MUSE_SESSION_ID`。`register_side_chat` 保存的是 MuseKnock 中的名称。使用陌生的 ID，首次投递时可能会创建新对话。[Gadget SDK 侧边对话说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “发送一条测试通知并检查回执。”Muse 使用新的 UUID 作为 `requestId` 调用 `send_test_notification`，然后用返回的回执 ID 调用 `get_delivery_status`。当状态为 `sent` 时，打开所选对话查看消息。重试同一次测试时，请使用相同的请求 ID。
 
-**4. 连接事件来源。** 如需接入 Slack、LINE、Twilio、Telegram、企业微信、GitHub 或 X，请参阅[直接连接服务](#直接连接服务)。Bluesky 和 Discord 的设置见[连接 Bluesky](#连接-bluesky)和[连接 Discord](#连接-discord)。Gmail 的设置见 [Gmail 接入指南](docs/gmail.zh-CN.md)。支持自定义 Bearer 请求头的服务可以使用下面的通用 Webhook。
+**4. 连接事件来源。** 如需接入 Slack、LINE、Twilio、Telegram、企业微信、GitHub 或 X，请参阅[直接连接服务](#直接连接服务)。Bluesky 和 Discord 的设置见[连接 Bluesky](#连接-bluesky)和[连接 Discord](#连接-discord)。支持自定义 Bearer 请求头的服务可以使用下面的通用 Webhook。
 
 在发送服务的 Webhook 设置中，将请求设为发往同一 Worker 的 `/hooks/custom` 的 `POST`，添加 `Authorization: Bearer YOUR_HOOK_TOKEN` 和 `Content-Type: application/json`。发送 `{"message":"构建完成"}` 等正文后会收到回执 ID。之后可以在 Muse 中查看投递状态、暂停来源或筛选事件类型。
 
@@ -79,10 +79,6 @@ curl --fail-with-body "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
 2. 向 `POST https://api.x.com/2/activity/subscriptions` 发送 `{"event_type":"post.create","filter":{"user_id":"NUMERIC_X_USER_ID"},"webhook_id":"WEBHOOK_ID"}`。如需接收删除通知，再用 `post.delete` 创建一条订阅。[订阅事件](https://docs.x.com/x-api/activity/quickstart)
 
 在订阅的公开账号发布帖子，确认消息已送达侧边对话。对于新帖子，MuseKnock 转发帖子 ID、URL 和正文的前 4,000 个字符。MCP 的筛选类型为 `post_create` 和 `post_delete`。七天内重复投递同一 X 事件 ID 只会产生一条通知。
-
-## 连接 Gmail
-
-Google Pub/Sub 将带签名的通知直接推送到 `/hooks/gmail`。Worker 读取一个 Gmail 账号的新邮件，并将通知发到选定的 Muse 侧边对话。首次在 Cloud Shell 配置 Google 资源。配置 Worker 并选择对话后，每五分钟运行一次的 Cron 会自动启动监听。如需立即开始，请从 Muse 调用 `sync_gmail`。[Gmail 接入指南](docs/gmail.zh-CN.md)
 
 ## 连接 Bluesky
 

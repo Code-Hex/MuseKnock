@@ -82,8 +82,6 @@ registerWebhook(app, 'ci', [
 | ツール | 引数 | 権限 |
 | --- | --- | --- |
 | `get_setup_status` | Worker 内の設定から `deviceConfigured`、`credentialStorageReady`、`active`、`ready` を返します。 | 閲覧 |
-| `get_gmail_status` | Gmail の設定状態、監視期限、最終同期日時、履歴欠落の有無を返します。 | 閲覧 |
-| `sync_gmail` | 必要に応じて Gmail の監視を開始・更新し、新着メールを同期します。 | 管理 |
 | `send_test_notification` | `requestId`（UUID）。選択中の投稿先に固定文のテスト通知を登録し、受付 ID を返します。通知元は `museknock-test`、イベント種別は `test` です。 | 管理 |
 | `list_side_chats` | MuseKnock の登録名とセッション ID の一覧、選択中の投稿先を返します。 | 閲覧 |
 | `register_side_chat` | `name` と `sessionId` を登録・更新します。投稿先が未設定なら最初の登録を選びます。 | 管理 |

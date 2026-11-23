@@ -1,10 +1,8 @@
 import { Hono, type MiddlewareHandler } from 'hono'
-import { bodyLimit } from 'hono/body-limit'
 import { bearerAuth } from 'hono/bearer-auth'
 import { timingSafeEqual } from 'hono/utils/buffer'
 import { handleMcp } from './mcp.ts'
 import { registerProvider } from './provider.ts'
-import { authenticateGmailPush } from './providers/gmail.ts'
 import { github } from './providers/github.ts'
 import { line } from './providers/line.ts'
 import { slack } from './providers/slack.ts'
@@ -37,13 +35,6 @@ registerProvider(app, 'twilio', twilio)
 registerProvider(app, 'wecom', wecom, ['GET', 'POST'])
 registerProvider(app, 'x', x, ['GET', 'POST'])
 
-app.post('/hooks/gmail', bodyLimit({ maxSize: 32 * 1024 }), async (c) => {
-  await authenticateGmailPush(c.req.raw, c.env)
-  const sync = await inbox(c.env).syncGmail()
-  if (!sync.ok) return c.text('Gmail synchronization unavailable', 503)
-  return c.body(null, 204)
-})
-
 registerWebhook(app, { slug: 'custom', source: 'default' }, [
   checkTokenRoles,
   bearerAuth({ verifyToken: (token, c) => matches(token, c.env.HOOK_TOKEN) }),
@@ -69,7 +60,6 @@ export default {
   fetch: app.fetch,
   async scheduled(_controller: ScheduledController, env: WorkerEnv['Bindings']) {
     if (
-      env.GMAIL_ACCOUNT ||
       env.BLUESKY_DID ||
       env.BLUESKY_IDENTIFIER ||
       env.BLUESKY_APP_PASSWORD ||

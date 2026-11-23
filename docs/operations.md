@@ -82,8 +82,6 @@ After redeploying, send notifications to `POST /hooks/ci`. To verify a source-sp
 | Tool | Arguments and result | Access |
 | --- | --- | --- |
 | `get_setup_status` | Returns `deviceConfigured`, `credentialStorageReady`, `active`, and `ready` from local configuration. | Read |
-| `get_gmail_status` | Shows Gmail readiness, watch expiration, last sync time, and any history gap. | Read |
-| `sync_gmail` | Starts or renews the watch when due and processes a batch of new messages. | Admin |
 | `send_test_notification` | `requestId` (UUID). Enqueues a fixed test notification for the active chat and returns its receipt. The source is `museknock-test` and the event type is `test`. | Admin |
 | `list_side_chats` | Lists locally registered names and session IDs, and identifies the active destination. | Read |
 | `register_side_chat` | `name`, `sessionId`. Creates or updates the registration. The first chat becomes active when no destination is configured. | Admin |

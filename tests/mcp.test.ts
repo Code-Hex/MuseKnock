@@ -17,14 +17,12 @@ test('MCP readers inspect delivery rules; only administrators can change them', 
 
   assert.deepEqual((await reader.listTools()).tools.map((tool) => tool.name).sort(), [
     'get_delivery_status',
-    'get_gmail_status',
     'get_setup_status',
     'list_side_chats',
     'list_sources',
   ])
   assert.deepEqual((await admin.listTools()).tools.map((tool) => tool.name).sort(), [
     'get_delivery_status',
-    'get_gmail_status',
     'get_setup_status',
     'list_side_chats',
     'list_sources',
@@ -33,21 +31,12 @@ test('MCP readers inspect delivery rules; only administrators can change them', 
     'set_active_side_chat',
     'set_event_filter',
     'set_source_paused',
-    'sync_gmail',
   ])
 
   assert.deepEqual((await reader.callTool({ name: 'list_side_chats' })).structuredContent, {
     active: 'default',
     chats: [{ name: 'default', sessionId: 'same-chat' }],
   })
-
-  const gmail = (await reader.callTool({ name: 'get_gmail_status' })).structuredContent
-  assertRecord(gmail)
-  assert.equal(gmail.configured, false)
-  assert.equal(gmail.ready, false)
-  for (const client of [reader, admin]) {
-    assert.equal((await client.callTool({ name: 'sync_gmail' })).isError, true)
-  }
 
   const pause = { name: 'set_source_paused', arguments: { source: 'ci', paused: true } }
   assert.equal((await reader.callTool(pause)).isError, true)

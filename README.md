@@ -34,7 +34,7 @@ Stop any executor or SDK daemon that uses this device identity and disable its a
 2. “Register the existing session `YOUR-EXISTING-SESSION-ID` as `builds` and select it for notifications.” Use the exact `--session-id` from your gadget or the previous deployment’s `MUSE_SESSION_ID`. `register_side_chat` saves the destination. MuseKnock can list its registered names. An unfamiliar session ID may create a new chat on first delivery. [Gadget SDK side chats](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “Send one test notification and check its receipt.” Muse calls `send_test_notification` with a fresh UUID as `requestId`, then `get_delivery_status` with the returned receipt ID. Look in the selected chat when the status is `sent`. Reuse the same request ID when retrying the same test.
 
-**4. Connect your event source.** For Slack, LINE, Twilio, Telegram, WeCom, GitHub, or X, follow [Connect a service directly](#connect-a-service-directly). For Bluesky or Discord, see [Connect Bluesky](#connect-bluesky) or [Connect Discord](#connect-discord). For Gmail, follow [Connect Gmail](docs/gmail.md). For a sender that supports a custom Bearer header, use the generic webhook below.
+**4. Connect your event source.** For Slack, LINE, Twilio, Telegram, WeCom, GitHub, or X, follow [Connect a service directly](#connect-a-service-directly). For Bluesky or Discord, see [Connect Bluesky](#connect-bluesky) or [Connect Discord](#connect-discord). For a sender that supports a custom Bearer header, use the generic webhook below.
 
 In the sending service, configure `POST /hooks/custom` on the same Worker, with `Authorization: Bearer YOUR_HOOK_TOKEN` and `Content-Type: application/json`. A body such as `{"message":"Build finished"}` returns a receipt ID. You can ask Muse to check that receipt, pause sources, and filter event types.
 
@@ -79,10 +79,6 @@ Use the app-only Bearer Token for these two X API calls. Send JSON with `Authori
 2. Send `POST https://api.x.com/2/activity/subscriptions` with `{"event_type":"post.create","filter":{"user_id":"NUMERIC_X_USER_ID"},"webhook_id":"WEBHOOK_ID"}`. To also receive deletions, create a second subscription with `post.delete`. [Activity subscriptions](https://docs.x.com/x-api/activity/quickstart)
 
 Publish a post on the subscribed public account to check delivery. MuseKnock forwards the Post ID, URL, and up to 4,000 characters of text for new posts. MCP filters use `post_create` and `post_delete`. Repeated deliveries with the same X event ID count once within seven days.
-
-## Connect Gmail
-
-Google Pub/Sub sends signed push notifications directly to `/hooks/gmail`. The Worker reads new mail from one Gmail account and posts it to your selected side chat. Set up Google resources once in Cloud Shell. After you configure the Worker and select a chat, its five-minute cron starts the watch automatically. Call `sync_gmail` from Muse to start immediately. [Set up Gmail](docs/gmail.md)
 
 ## Connect Bluesky
 
