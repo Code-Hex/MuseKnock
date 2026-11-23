@@ -31,7 +31,32 @@ Cloudflare と GitHub のアカウント、認証済みの Muse 端末情報、�
 2. 「既存のセッション `既存のセッションID` を『ビルド通知』として登録し、通知先にして」。ID にはガジェットの `--session-id`、または旧環境の `MUSE_SESSION_ID` の正確な値を使います。`register_side_chat` が登録する名前は MuseKnock 内のものです。未知の ID を使うと初回の投稿で新しいチャットが作られる場合があります。[Gadget SDK のサイドチャット](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. 「テスト通知を1件送り、配信状態を確認して」。Muse は新しい UUID を `requestId` として `send_test_notification` を呼び、返った受付 ID を `get_delivery_status` に渡します。`sent` になったら選んだチャットを開きます。同じテストを再試行するときは同じリクエスト ID を使います。
 
-**4. 送信元サービスを接続します。** 送信元の Webhook 設定で、同じ Worker の `/hooks/default` に `POST` を指定します。ヘッダーを `Authorization: Bearer YOUR_HOOK_TOKEN`、`Content-Type: application/json` とし、例えば `{"message":"ビルドが完了しました"}` を送ると受付 ID が返ります。以降は Muse から配信状態の確認、通知元の一時停止、イベント種別の絞り込みができます。
+**4. 送信元サービスを接続します。** Slack、LINE、Twilio、Telegram、企業微信には[サービス別の設定手順](#サービスを直接接続する)を使います。Bearer ヘッダーを指定できる送信元には、次の汎用 Webhook が使えます。
+
+送信元の Webhook 設定で、同じ Worker の `/hooks/default` に `POST` を指定します。ヘッダーを `Authorization: Bearer YOUR_HOOK_TOKEN`、`Content-Type: application/json` とし、例えば `{"message":"ビルドが完了しました"}` を送ると受付 ID が返ります。以降は Muse から配信状態の確認、通知元の一時停止、イベント種別の絞り込みができます。
+
+## サービスを直接接続する
+
+Cloudflare で対象の Worker を開き、**Settings → Variables and Secrets** に利用するサービスの値を Secret として追加し、変更をデプロイします。登録する URL は、Worker の公開 HTTPS URL の末尾に下表のパスを付けたものです。各サービスは独自の方式で認証するため、`HOOK_TOKEN` は `/hooks/default` 用に保管します。
+
+| サービス | Worker に登録する Secret | URL の登録と動作確認 |
+| --- | --- | --- |
+| Slack Events API | **Basic Information → App Credentials** の Signing Secret を `SLACK_SIGNING_SECRET` に設定 | **Event Subscriptions** を有効にし、Request URL に `/hooks/slack` を登録します。**Verified** と表示されたら `app_mention` などの Bot Event を購読し、必要な権限を承認してアプリをインストールまたは再インストールします。チャンネルに招待してメンションを送ります。[Slack の URL 設定](https://docs.slack.dev/apis/events-api/using-http-request-urls/) |
+| LINE Messaging API | チャネルの **チャネル基本設定** にあるチャネルシークレットを `LINE_CHANNEL_SECRET` に設定 | **Messaging API 設定** の Webhook URL に `/hooks/line` を登録し、**検証** を押して **Webhook の利用** を有効にします。受信エラー時の再送は **Webhook の再送** で有効にできます。公式アカウントにメッセージを送ります。検証時に届く署名付きの空イベントは投稿されません。[LINE の接続確認](https://developers.line.biz/ja/docs/messaging-api/verify-webhook-url/) |
+| Twilio の SMS・MMS 着信 | 番号を所有するアカウントの Primary Auth Token を `TWILIO_AUTH_TOKEN` に設定 | **Active Numbers** で対象番号を開き、Messaging の **A message comes in → Webhook → HTTP POST** に `/hooks/twilio` で終わる公開 URL を正確に入力して保存します。その番号に SMS を送って確認します。Worker は空の TwiML を返すため、自動返信は送信されません。[Twilio の着信 Webhook](https://www.twilio.com/docs/messaging/guides/webhook-request) |
+| 企業微信（WeCom）の自建アプリ | **我的企业** の企業 ID を `WECOM_CORP_ID` に、コールバックの Token と EncodingAESKey を `WECOM_TOKEN` と `WECOM_ENCODING_AES_KEY` に設定 | **应用管理 → 自建 → 接收消息 → 设置 API 接收** で `/hooks/wecom` と同じ Token、EncodingAESKey を入力します。管理画面で企業名義の登録済みドメインを求められた場合は、その条件を満たすカスタムドメインを Worker に設定します。保存時に暗号化されたチャレンジで接続を確認します。その後、アプリにメッセージを送ります。[企業微信のコールバック](https://developer.work.weixin.qq.com/document/path/90930) |
+
+**Telegram Bot API** は @BotFather で Bot を作成します。英数字、アンダースコア、ハイフンからなるランダムな値（1〜256 文字）を別途生成し、Cloudflare の `TELEGRAM_WEBHOOK_SECRET` に保存します。HTTPS クライアントから次の値で `setWebhook` を呼びます。シェルで実行する場合、`BOT_TOKEN` は BotFather のトークン、`WORKER_URL` は末尾のスラッシュを除いた Worker の URL です。Bot トークンは Telegram API の呼び出しにだけ使います。登録すると、その Bot の既存の Webhook URL は置き換わります。[Telegram の Webhook 設定](https://core.telegram.org/bots/api#setwebhook)
+
+```sh
+curl --fail-with-body -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+  --data-urlencode "url=${WORKER_URL}/hooks/telegram" \
+  --data-urlencode "secret_token=${TELEGRAM_WEBHOOK_SECRET}" \
+  --data-urlencode 'allowed_updates=["message","edited_message","channel_post","edited_channel_post"]'
+curl --fail-with-body "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
+```
+
+`getWebhookInfo` で登録した URL が返ったら、Bot との個人チャットにメッセージを送ります。通常のメッセージ、チャンネル投稿、これらの編集を受け付け、テキストやキャプションがあれば転送します。選択した Muse サイドチャットに届けば、配信まで確認できています。この Bot にメッセージを送れる人は誰でも通知を発生させられます。
 
 ## 投稿先を切り替える
 

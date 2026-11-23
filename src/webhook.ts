@@ -10,6 +10,13 @@ export type WorkerEnv = {
     HOOK_TOKEN: string
     MCP_TOKEN: string
     MCP_ADMIN_TOKEN: string
+    SLACK_SIGNING_SECRET?: string
+    LINE_CHANNEL_SECRET?: string
+    TWILIO_AUTH_TOKEN?: string
+    TELEGRAM_WEBHOOK_SECRET?: string
+    WECOM_TOKEN?: string
+    WECOM_ENCODING_AES_KEY?: string
+    WECOM_CORP_ID?: string
   }
 }
 

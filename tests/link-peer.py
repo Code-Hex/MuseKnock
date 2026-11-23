@@ -70,6 +70,8 @@ async def main():
             "source": "default", "type": "notification", "text": '{\n  "id": 9007199254740993\n}\n',
         },
         {"source": "museknock-test", "type": "test", "text": "MuseKnock test notification."},
+        {"source": "telegram", "type": "edited_channel_post",
+         "text": '{"message_id":3,"chat":{"id":-7},"caption":"Release ready"}'},
     ])
 
     async def handle(socket):
@@ -81,7 +83,7 @@ async def main():
 
     async with serve(handle, "127.0.0.1", 0, compression=None) as server:
         print(server.sockets[0].getsockname()[1], flush=True)
-        for _ in range(8):
+        for _ in range(9):
             error = await finished.get()
             if error:
                 raise error

@@ -31,7 +31,32 @@ Stop any executor or SDK daemon that uses this device identity and disable its a
 2. “Register the existing session `YOUR-EXISTING-SESSION-ID` as `builds` and select it for notifications.” Use the exact `--session-id` from your gadget or the previous deployment’s `MUSE_SESSION_ID`. `register_side_chat` saves the destination. MuseKnock can list its registered names. An unfamiliar session ID may create a new chat on first delivery. [Gadget SDK side chats](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “Send one test notification and check its receipt.” Muse calls `send_test_notification` with a fresh UUID as `requestId`, then `get_delivery_status` with the returned receipt ID. Look in the selected chat when the status is `sent`. Reuse the same request ID when retrying the same test.
 
-**4. Connect your event source.** In the sending service, configure `POST /hooks/default` on the same Worker, with `Authorization: Bearer YOUR_HOOK_TOKEN` and `Content-Type: application/json`. A body such as `{"message":"Build finished"}` returns a receipt ID. You can ask Muse to check that receipt, pause sources, and filter event types.
+**4. Connect your event source.** For Slack, LINE, Twilio, Telegram, or WeCom, follow [Connect a service directly](#connect-a-service-directly). For a sender that supports a custom Bearer header, use the generic webhook below.
+
+In the sending service, configure `POST /hooks/default` on the same Worker, with `Authorization: Bearer YOUR_HOOK_TOKEN` and `Content-Type: application/json`. A body such as `{"message":"Build finished"}` returns a receipt ID. You can ask Muse to check that receipt, pause sources, and filter event types.
+
+## Connect a service directly
+
+Open your Worker in Cloudflare, go to **Settings → Variables and Secrets**, add the secrets for the service you use, and deploy the changes. Append the path below to your public HTTPS Worker URL. Each endpoint uses the service's own authentication. Keep `HOOK_TOKEN` for `/hooks/default`.
+
+| Service | Worker secrets | Register the URL and check delivery |
+| --- | --- | --- |
+| Slack Events API | `SLACK_SIGNING_SECRET` from **Basic Information → App Credentials** | Turn on **Event Subscriptions**, enter `/hooks/slack` as the Request URL and wait for **Verified**. Subscribe to a bot event such as `app_mention`, approve the required scopes and install or reinstall the app. Invite it to a channel and mention it. [Slack request URLs](https://docs.slack.dev/apis/events-api/using-http-request-urls/) |
+| LINE Messaging API | `LINE_CHANNEL_SECRET` from the channel's **Basic settings** | Under **Messaging API**, set the Webhook URL to `/hooks/line`, click **Verify** and enable **Use webhook**. Enable **Webhook redelivery** to retry failed requests. Send the official account a message. The signed verification request has an empty event list and creates no notification. [LINE webhook verification](https://developers.line.biz/en/docs/messaging-api/verify-webhook-url/) |
+| Twilio incoming SMS/MMS | `TWILIO_AUTH_TOKEN`, the primary Auth Token of the account that owns the number | In **Active Numbers**, open the number's messaging configuration. Set **A message comes in → Webhook → HTTP POST** to the exact public URL ending in `/hooks/twilio` and save. Send the number an SMS. The Worker returns empty TwiML, so the sender receives no automatic reply. [Twilio incoming messages](https://www.twilio.com/docs/messaging/guides/webhook-request) |
+| WeCom (企业微信), internal app | `WECOM_CORP_ID` from **My Enterprise** and the app callback's `WECOM_TOKEN` and `WECOM_ENCODING_AES_KEY` | In **应用管理 → 自建 → 接收消息 → 设置 API 接收**, enter `/hooks/wecom` and the matching Token and EncodingAESKey. If the console requires an organization-registered domain, use a matching custom domain for the Worker. Save to verify the encrypted URL challenge, then send a message to the app. [WeCom callbacks](https://developer.work.weixin.qq.com/document/path/90930) |
+
+**Telegram Bot API.** Create a bot with @BotFather. Generate a separate random secret using letters, digits, underscores or hyphens (1–256 characters) and save it as `TELEGRAM_WEBHOOK_SECRET` in Cloudflare. In an HTTPS client, call `setWebhook` with the values shown below. In the shell example, set `BOT_TOKEN` to the BotFather token and `WORKER_URL` to the Worker origin without a trailing slash. The bot token is needed only when calling Telegram. Registering the URL replaces this bot's current webhook. [Telegram webhook setup](https://core.telegram.org/bots/api#setwebhook)
+
+```sh
+curl --fail-with-body -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+  --data-urlencode "url=${WORKER_URL}/hooks/telegram" \
+  --data-urlencode "secret_token=${TELEGRAM_WEBHOOK_SECRET}" \
+  --data-urlencode 'allowed_updates=["message","edited_message","channel_post","edited_channel_post"]'
+curl --fail-with-body "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
+```
+
+Check that `getWebhookInfo` returns your URL, then open a private chat with the bot and send a message. MuseKnock forwards messages, channel posts and their edits, including text or captions when present. Check the selected Muse chat to confirm delivery. Anyone who can message the bot can trigger a notification.
 
 ## Change the destination
 

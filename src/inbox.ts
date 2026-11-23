@@ -54,6 +54,15 @@ export class Inbox extends DurableObject<MuseBindings> {
     return receipt
   }
 
+  async enqueueBatch(source: string, events: Omit<HookEvent, 'source'>[]) {
+    for (const event of events) {
+      const receipt = await this.enqueue({ ...event, source })
+      if ('noDestination' in receipt) return 'noDestination'
+      if ('limited' in receipt) return 'limited'
+    }
+    return 'accepted'
+  }
+
   async alarm() {
     const storage = this.ctx.storage
     const next = this.queue.nextWakeAt()

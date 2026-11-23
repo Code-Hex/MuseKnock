@@ -31,7 +31,32 @@ MuseKnock 通过 Cloudflare Workers 把 Webhook 通知发送到已有的 Muse �
 2. “将现有会话 `已有会话ID` 注册为‘构建通知’，并设为通知目标。”请使用设备原来的 `--session-id`，或旧部署中的 `MUSE_SESSION_ID`。`register_side_chat` 保存的是 MuseKnock 中的名称。使用陌生的 ID，首次投递时可能会创建新对话。[Gadget SDK 侧边对话说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “发送一条测试通知并检查回执。”Muse 使用新的 UUID 作为 `requestId` 调用 `send_test_notification`，然后用返回的回执 ID 调用 `get_delivery_status`。当状态为 `sent` 时，打开所选对话查看消息。重试同一次测试时，请使用相同的请求 ID。
 
-**4. 连接事件来源。** 在发送服务的 Webhook 设置中，将请求设为发往同一 Worker 的 `/hooks/default` 的 `POST`，添加 `Authorization: Bearer YOUR_HOOK_TOKEN` 和 `Content-Type: application/json`。发送 `{"message":"构建完成"}` 等正文后会收到回执 ID。之后可以在 Muse 中查看投递状态、暂停来源或筛选事件类型。
+**4. 连接事件来源。** 如需接入 Slack、LINE、Twilio、Telegram 或企业微信，请参阅[直接连接服务](#直接连接服务)。支持自定义 Bearer 请求头的服务可以使用下面的通用 Webhook。
+
+在发送服务的 Webhook 设置中，将请求设为发往同一 Worker 的 `/hooks/default` 的 `POST`，添加 `Authorization: Bearer YOUR_HOOK_TOKEN` 和 `Content-Type: application/json`。发送 `{"message":"构建完成"}` 等正文后会收到回执 ID。之后可以在 Muse 中查看投递状态、暂停来源或筛选事件类型。
+
+## 直接连接服务
+
+在 Cloudflare 中打开 Worker，进入 **Settings → Variables and Secrets**，按需将下表中的值添加为 Secret 并部署更改。将相应路径附加到 Worker 的公开 HTTPS 地址，得到要注册的完整 URL。各服务使用自身的认证机制，`HOOK_TOKEN` 仅供 `/hooks/default` 使用。
+
+| 服务 | Worker Secret | 注册 URL 并验证投递 |
+| --- | --- | --- |
+| Slack Events API | 将 **Basic Information → App Credentials** 中的 Signing Secret 保存为 `SLACK_SIGNING_SECRET` | 启用 **Event Subscriptions**，将 `/hooks/slack` 注册为 Request URL。显示 **Verified** 后，订阅 `app_mention` 等机器人事件，授权所需权限并安装或重新安装应用。将机器人邀请到频道并 @ 它。[Slack URL 设置](https://docs.slack.dev/apis/events-api/using-http-request-urls/) |
+| LINE Messaging API | 将频道 **Basic settings** 中的 Channel secret 保存为 `LINE_CHANNEL_SECRET` | 在 **Messaging API** 中将 Webhook URL 设为 `/hooks/line`，点击 **Verify**，启用 **Use webhook**，并按需开启 **Webhook redelivery** 以便在接收失败时重试，然后向官方账号发送消息。验证请求带有签名和空事件列表，不会生成通知。[LINE 连接验证](https://developers.line.biz/en/docs/messaging-api/verify-webhook-url/) |
+| Twilio 入站短信和彩信 | 将号码所属账号的 Primary Auth Token 保存为 `TWILIO_AUTH_TOKEN` | 在 **Active Numbers** 中打开该号码的消息设置。在 **A message comes in → Webhook → HTTP POST** 中准确填写以 `/hooks/twilio` 结尾的公开 URL 并保存。向号码发送短信进行验证。Worker 返回空的 TwiML，不会自动回复短信。[Twilio 入站 Webhook](https://www.twilio.com/docs/messaging/guides/webhook-request) |
+| 企业微信自建应用 | 将 **我的企业** 中的企业 ID 保存为 `WECOM_CORP_ID`，将回调的 Token、EncodingAESKey 分别保存为 `WECOM_TOKEN`、`WECOM_ENCODING_AES_KEY` | 在 **应用管理 → 自建 → 接收消息 → 设置 API 接收** 中填入 `/hooks/wecom` 和相同的 Token、EncodingAESKey。如果后台要求主体相关的备案域名，请为 Worker 配置相应的自定义域名。保存时会自动验证加密回调 URL，然后给应用发送消息。[企业微信回调配置](https://developer.work.weixin.qq.com/document/path/90930) |
+
+**Telegram Bot API**。通过 @BotFather 创建机器人，另行生成由字母、数字、下划线或连字符组成的随机值（1 至 256 个字符），并将其保存为 Cloudflare 的 `TELEGRAM_WEBHOOK_SECRET`。使用 HTTPS 客户端按下例调用 `setWebhook`。在 shell 示例中，`BOT_TOKEN` 是 BotFather 提供的令牌，`WORKER_URL` 是末尾不带斜杠的 Worker 地址。机器人令牌仅用于访问 Telegram API。注册后会替换该机器人现有的 Webhook URL。[Telegram Webhook 设置](https://core.telegram.org/bots/api#setwebhook)
+
+```sh
+curl --fail-with-body -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+  --data-urlencode "url=${WORKER_URL}/hooks/telegram" \
+  --data-urlencode "secret_token=${TELEGRAM_WEBHOOK_SECRET}" \
+  --data-urlencode 'allowed_updates=["message","edited_message","channel_post","edited_channel_post"]'
+curl --fail-with-body "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
+```
+
+通过 `getWebhookInfo` 确认返回的 URL，然后在与机器人的私聊中发送消息。MuseKnock 接收消息、频道帖子及其编辑，并转发其中的文本或媒体说明。消息出现在选定的 Muse 侧边对话中即表示投递成功。任何能给该机器人发消息的人都能触发通知。
 
 ## 切换目标对话
 

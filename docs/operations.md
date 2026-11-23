@@ -46,6 +46,8 @@ Send `POST /hooks/default` with `HOOK_TOKEN` as the Bearer token.
 
 The request body and the decoded text may each be up to 32 KiB. Include only the information you intend to send to Muse. The Worker records the active destination when accepting each new event.
 
+The built-in service endpoints accept request bodies up to 512 KiB. Each resulting notification can contain up to 32 KiB of text. They reply in the format the service expects. To pause or filter notifications through MCP, use the source name from the URL (for example, `telegram`) and the event type (for example, `edited_message`). [Service setup](../README.md#connect-a-service-directly)
+
 Each source can submit 10 new events per rolling 60 seconds. Excess requests receive HTTP `429` and `Retry-After: 60`. Across all sources, the store authorizes up to three delivery attempts per rolling 60 seconds, one at a time. Retries count toward this limit. Receipt lookup and deduplication cover seven days from receipt. The next store operation applies expiry and removes old history. The limits are defined in `src/store.ts`.
 
 ## Add a source or payload format
@@ -83,7 +85,7 @@ After redeploying, send notifications to `POST /hooks/ci`. To verify a source-sp
 | `set_source_paused` | `source`, `paused` (boolean). | Admin |
 | `set_event_filter` | `source`, `types` (array of allowed event types). An empty array allows all types. | Admin |
 
-Registration names are case-sensitive, with 1 to 64 characters after trimming. Start with a Unicode letter or number. You may then use letters, numbers, combining marks, spaces, periods, underscores, and hyphens. Session IDs are case-sensitive and accept 1–64 ASCII letters, digits or hyphens. Registration records the ID you give it without posting a test message. Use the original gadget session ID to continue an existing chat. A valid legacy `MUSE_SESSION_ID` appears as `default` on upgrade. An authenticated webhook returns HTTP `503` until there is an active destination and the device secrets are configured.
+Registration names are case-sensitive, with 1 to 64 characters after trimming. Start with a Unicode letter or number. You may then use letters, numbers, combining marks, spaces, periods, underscores, and hyphens. Session IDs are case-sensitive and accept 1–64 ASCII letters, digits or hyphens. Registration records the ID you give it without posting a test message. Use the original gadget session ID to continue an existing chat. A valid legacy `MUSE_SESSION_ID` appears as `default` on upgrade. An authenticated notification returns HTTP `503` until there is an active destination and the device secrets are configured.
 
 To rotate webhook or MCP tokens, update the corresponding Worker secrets in Cloudflare and deploy the changes. Update the sender or connector that uses each token.
 

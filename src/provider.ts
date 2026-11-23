@@ -1,0 +1,60 @@
+import type { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
+import { HTTPException } from 'hono/http-exception'
+import { identifier } from './identifiers.ts'
+import { museDevice } from './inbox.ts'
+import type { HookEvent } from './store.ts'
+import { inbox, type WorkerEnv } from './webhook.ts'
+
+export type ProviderDelivery = {
+  events?: Omit<HookEvent, 'source'>[]
+  response: Response
+}
+
+export function parseJson(bytes: ArrayBuffer): unknown {
+  try {
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
+  } catch {
+    throw new HTTPException(400, { message: 'Invalid JSON' })
+  }
+}
+
+export async function verifyHmac(
+  hash: 'SHA-1' | 'SHA-256',
+  secret: string,
+  message: BufferSource,
+  signature: Uint8Array<ArrayBuffer>,
+) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash },
+    false,
+    ['verify'],
+  )
+  return crypto.subtle.verify('HMAC', key, signature, message)
+}
+
+export function registerProvider(
+  app: Hono<WorkerEnv>,
+  source: string,
+  receive: (request: Request, env: WorkerEnv['Bindings']) => Promise<ProviderDelivery>,
+  methods = ['POST'],
+) {
+  app.on(methods, '/hooks/' + source, bodyLimit({ maxSize: 512 * 1024 }), async (c) => {
+    const { events, response } = await receive(c.req.raw, c.env)
+    if (!events?.length) return response
+    if (!museDevice(c.env)) return c.text('Configure the Muse device first', 503)
+    for (const { key, type, text } of events) {
+      if (!identifier.test(type) || !/^[!-~]{1,128}$/.test(key) || !text.trim()) {
+        return c.text('Invalid notification', 400)
+      }
+      if (new TextEncoder().encode(text).length > 32 * 1024) return c.text('Event too large', 413)
+    }
+    const result = await inbox(c.env).enqueueBatch(source, events)
+    if (result === 'noDestination') return c.text('Register a destination side chat first', 503)
+    if (result === 'limited')
+      return c.text('Source rate limit reached', 429, { 'Retry-After': '60' })
+    return response
+  })
+}

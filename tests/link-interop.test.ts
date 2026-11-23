@@ -98,7 +98,7 @@ test(
           ],
         })
       },
-      { MUSE_SESSION_ID: '' },
+      { MUSE_SESSION_ID: '', TELEGRAM_WEBHOOK_SECRET: 'interop-test' },
     )
     t.after(() => worker.close())
     const admin = await connect(new URL('/mcp', worker.url), 'MCP_ADMIN_TOKEN-test')
@@ -151,7 +151,16 @@ test(
       state = status.state
     } while ((state === 'queued' || state === 'sending') && Date.now() < until)
     assert.equal(state, 'sent')
-    assert.deepEqual(accountRequests, ['/device_token/refresh', '/fetch_vms', '/fetch_vms'])
+    const telegram = await fetch(new URL('/hooks/telegram', worker.url), {
+      method: 'POST',
+      headers: { 'X-Telegram-Bot-Api-Secret-Token': 'interop-test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        update_id: 101,
+        edited_channel_post: { message_id: 3, chat: { id: -7 }, caption: 'Release ready' },
+      }),
+    })
+    assert.equal(telegram.status, 200)
     assert.equal((await exited)[0], 0)
+    assert.deepEqual(accountRequests, ['/device_token/refresh', '/fetch_vms', '/fetch_vms', '/fetch_vms'])
   },
 )
