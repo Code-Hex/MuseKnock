@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createCipheriv, createHash, randomBytes } from 'node:crypto'
 import { test } from 'node:test'
 import { connect } from './mcp-client.ts'
-import { startWorker } from './worker.ts'
+import { startConfiguredWorker, startWorker } from './worker.ts'
 
 const aesKey = Buffer.from(Array.from({ length: 32 }, (_, index) => index))
 const settings = {
@@ -26,7 +26,7 @@ function encrypted(message: string, recipient = settings.WECOM_CORP_ID, damagePa
 }
 
 function signed(url: URL, ciphertext: string, ageSeconds = 0) {
-  const result = new URL('/hooks/wecom', url)
+  const result = new URL('/v1/hooks/wecom', url)
   const timestamp = String(Math.floor(Date.now() / 1000) - ageSeconds)
   const nonce = '185606411'
   const signature = createHash('sha1')
@@ -74,7 +74,7 @@ test('WeCom checks signatures, decrypts both padding ranges and verifies challen
 })
 
 test('WeCom acknowledges authenticated XML callbacks, rejects invalid XML and keeps verification out of the inbox', async (t) => {
-  const worker = await startWorker(undefined, settings)
+  const worker = await startConfiguredWorker(undefined, settings)
   t.after(() => worker.close())
   const reader = await connect(new URL('/mcp', worker.url), 'MCP_TOKEN-test')
   t.after(() => reader.close())

@@ -11,36 +11,42 @@
 
 使用社区登录时，在你自己的私有 Codespace 编辑器中打开 `muse-auth/.state/state.json`，只把 `sdk_token`、`device.device_id` 和 `device.refresh_token` 复制到 Cloudflare 部署表单中对应的密钥栏。将原始文件和账户会话凭据保留在 Codespace 中。完成设备凭据移交后即可删除 Codespace。[部署步骤](../README.zh-CN.md#快速开始)
 
+首次部署需要五个 Worker 密钥。为 `MCP_ADMIN_TOKEN` 生成随机管理令牌，再为 `CREDENTIAL_ENCRYPTION_KEY` 单独生成 32 字节的随机密钥（64 个十六进制字符）。在 Cloudflare 中同时填写三个设备字段：`MUSE_NODE_ID`、`MUSE_SDK_TOKEN` 和 `MUSE_REFRESH_TOKEN`。设置管理连接器还需要 Worker 的 `/mcp` 地址以及现有侧边对话的会话 ID。
+
+使用管理连接器注册侧边对话，并确认该对话收到测试通知。此后，可以在同一次部署中删除全部三个设备密钥。保留 `MCP_ADMIN_TOKEN` 和原来的 `CREDENTIAL_ENCRYPTION_KEY`。下次启动时，Worker 会使用保存在 Durable Object 中的加密配对信息。只保留一项或两项设备配置会暂停投递，直至补全或删除全部三项。
+
+对于使用 `/v1/hooks/custom` 的快捷指令或其他发送端，请设置单独的随机 Worker 密钥 `HOOK_TOKEN`。如需使用只读 MCP 连接器，请另行生成随机密钥 `MCP_TOKEN`。
+
 ## 排查未收到的通知
 
 请 Muse 按回执 ID 查询投递状态。即使尚未配置连接器，也可以用原来的 `Idempotency-Key` 重发 Webhook，查看该通知的状态。
 
 | 状态 | 含义与排查方法 |
 | --- | --- |
-| `queued` | 正在等待 Worker 投递。请检查 Muse 密钥是否齐全、设备授权是否有效，以及设备是否有已分配的 VM。 |
+| `queued` | 正在等待 Worker 投递。请检查保存的配对信息、设备授权和设备的 VM 租约。 |
 | `sending` | Worker 已领取事件，正在连接或发送。 |
 | `sent` | Muse 已确认接收。请打开 Worker 收到通知时选中的目标对话。 |
-| `suppressed` | 来源已暂停，或事件类型不在允许列表中。该通知的投递已结束。 |
+| `suppressed` | 来源规则、消息撤回或熔断器等都可能阻止投递。`message_retracted` 表示投递前 Slack 或 X 已删除原帖，或 LINE 已撤回消息。查看回执中的 `reason`，`source_open` 表示该来源已达到上限，`circuit_open` 表示已达到全局上限。 Worker 在每次发送前确认对话是否存在。回执中的 `side_chat_missing` 表示 Muse 返回了 404。通过 MCP 选择现有对话后即可恢复新通知的投递。已被抑制的通知不会重发。 |
 | `expired` | 通知已排队一小时，超过投递期限。 |
 | `unknown` | 消息可能已经发送，但 Worker 未能确认结果，或者两分钟的投递许可已经过期。发送新通知前请先查看侧边对话。 |
 
-如果能确定提交前已经失败，Worker 会在投递限额和有效期内重试。如果消息可能已到达 Muse，Worker 会记录为 `unknown`，由你决定是否重发，以免因确认响应丢失而重复投递。[Gadget SDK 消息传输协议](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/link_client.py)
+如果通知在提交前发送失败，Worker 在等待重试期间仍可向其他对话投递通知。如果消息可能已到达 Muse，Worker 会记录为 `unknown`，由你决定是否重发，以免因确认响应丢失而重复投递。[Gadget SDK 消息传输协议](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/link_client.py)
 
-## 迁移已保存的凭据
+每条通知都保留接收时的设备配对、VM 和会话 ID。如果更改设备配对或 VM 配置，请在过期前恢复原配置以继续投递。设备重新配对后，通过 MCP 注册目标对话。
 
-1. 升级现有 Worker 前，在 Cloudflare 的 **Settings → Variables and Secrets** 中将 `CREDENTIAL_ENCRYPTION_KEY` 添加为 **Secret**。按[部署步骤](../README.zh-CN.md#快速开始)生成 64 个十六进制字符作为专用密钥。如果该 Worker 已设置密钥，请保留原值。全新本地配置会生成自己的密钥。用 `npm run deploy:local` 更新已有 Worker 前，请先将该 Worker 的原密钥恢复到 `.dev.vars`。
-2. 部署更新后，通过已认证的 Muse 连接器调用 `get_setup_status`，确认 `credentialStorageReady` 为 `true`。如果为 `false`，请检查 Secret 配置，如果密钥已更改则从备份中恢复原值。Durable Object 启动时会用 AES-256-GCM 加密已保存的 Muse 设备令牌和 Bluesky 会话。后续令牌更新也会加密。解密复制的凭据记录需要保存在 Worker Secret 中的独立密钥。请在私人密码管理器中保管密钥，以便重新部署或恢复。如果误换了密钥，恢复原值即可重新读取已保存的令牌。
-3. 迁移前的导出文件和时间点恢复快照中可能仍有明文令牌。若这些数据已经泄露，请撤销受影响的 Muse 设备授权并重新授权设备。如果 Bluesky 令牌泄露，请撤销受影响的会话及应用密码，再签发新的应用密码。更新对应的 Worker Secret 后恢复投递。[Cloudflare 存储恢复机制](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#point-in-time-recovery-api)
+## 恢复凭据加密密钥
+
+Worker 使用 AES-256-GCM 加密保存的 Muse 设备令牌和 Bluesky 会话。请在密码管理器中备份 `CREDENTIAL_ENCRYPTION_KEY`。重新部署同一个 Worker 时请使用原密钥。如果 `get_setup_status` 返回的 `credentialStorageReady` 为 `false`，请检查 Worker 的密钥配置，并从备份中恢复原值。如果丢失原密钥，已加密的记录将无法解密。请部署使用新存储的 Worker，用重新授权的设备凭据完成首次配置。
 
 ## 更新设备授权
 
-交接后，Worker 会将轮换后的设备凭据保存在 Durable Object 中。请勿在其他执行器、本地开发环境或其他 Worker 部署中使用同一设备身份。如果 Muse 撤销了配对，请重新授权设备凭据，在 Cloudflare 中更新相应的 Worker 密钥并重新部署。已注册的目标对话保存在 Durable Object 中。
+如果 Muse 撤销配对，请重新授权专用设备，同时设置三个新的设备密钥并部署。为新配对注册目标对话，确认收到测试通知后即可同时删除三个设备密钥。新建 Durable Object 时也需要完成首次配置。请确保每个设备身份同时仅由一个 Worker 或 SDK 守护进程使用。
 
-Worker 使用标准设备 API `api.muse.ai` 和加密的 Link 网关 `hatch.metaaivm.com`。如果设置了 `MUSE_VM_ID`，请确认该 VM 已分配给设备。未指定时，Worker 会选择默认的已分配 VM，如果没有默认项则选择列表中的第一项。[Gadget SDK 设备 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
+Worker 使用标准设备 API `api.muse.ai` 和加密的 Link 网关 `hatch.metaaivm.com`。如果设置了 `MUSE_VM_ID`，请确认该 VM 已分配给设备。未指定时，注册对话会使用默认 VM，没有默认项则使用列表中的第一项。重新选择已验证的名称时，Worker 会在注册时保存的 VM 上查找对话。要将该名称迁移到当前默认 VM，请使用相同的名称和会话 ID 再次调用 `register_side_chat`。[Gadget SDK 设备 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 
 ## 发送 Webhook
 
-向 `POST /hooks/custom` 发送请求，用 `HOOK_TOKEN` 进行 Bearer 认证。 在 MCP 中，来源名称仍为 `default`，已有的暂停和筛选规则继续生效。
+向 `POST /v1/hooks/custom` 发送请求，将 `HOOK_TOKEN` 用作 Bearer 令牌。通过 MCP 暂停或筛选这些通知时，来源名称为 `custom`。
 
 | 输入 | 处理方式 |
 | --- | --- |
@@ -75,7 +81,7 @@ registerWebhook(app, 'ci', [
 })
 ```
 
-重新部署后即可向 `POST /hooks/ci` 发送通知。验证来源签名时，请在中间件中读取 `c.req.raw.clone()`，然后再解码正文。你可以在认证后添加限流或过滤逻辑。Durable Object 会对所有区域执行同一投递上限。[Hono 中间件](https://hono.dev/docs/guides/middleware) · [Durable Object 的 SQLite 存储](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
+重新部署后即可向 `POST /v1/hooks/ci` 发送通知。验证来源签名时，请在中间件中读取 `c.req.raw.clone()`，然后再解码正文。你可以在认证后添加限流或过滤逻辑。Durable Object 会对所有区域执行同一投递上限。[Hono 中间件](https://hono.dev/docs/guides/middleware) · [Durable Object 的 SQLite 存储](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
 
 ## MCP 工具
 
@@ -88,10 +94,12 @@ registerWebhook(app, 'ci', [
 | `set_active_side_chat` | 通过 `name` 选择已有记录，作为之后接收通知的目标。 | 管理 |
 | `list_sources` | 无参数。列出有接收记录或投递规则的来源。 | 只读 |
 | `get_delivery_status` | `id`（回执 ID）。返回投递信息，不含正文。 | 只读 |
+| `get_delivery_breaker` | 返回全局剩余额度和各来源的尝试次数。 | 只读 |
+| `rearm_delivery_breaker` | `expectedGeneration`。达到任一上限且所有在途尝试结束后，重置全局和各来源的额度。 | 恢复 |
 | `set_source_paused` | `source`、`paused`（布尔值）。 | 管理 |
 | `set_event_filter` | `source`、`types`（允许的事件类型数组）。空数组允许所有类型。 | 管理 |
 
-注册名区分大小写，去除首尾空格后长度为 1 至 64 个字符。首位使用 Unicode 字母或数字，之后还允许组合标记、空格、英文句点、下划线和连字符。会话 ID 区分大小写，允许使用 1 至 64 个 ASCII 字母、数字或连字符。注册时只保存你提供的 ID，不会发送测试消息。要继续原有对话，请使用设备发消息时使用的会话 ID。升级时，有效的旧版 `MUSE_SESSION_ID` 将显示为 `default`。设备密钥不全或未选择投递目标时，已通过身份验证的通知请求将收到 HTTP `503`。
+注册名区分大小写，去除首尾空格后长度为 1 至 64 个字符。首位使用 Unicode 字母或数字，之后还允许组合标记、空格、英文句点、下划线和连字符。会话 ID 区分大小写，允许使用 1 至 64 个 ASCII 字母、数字或连字符。注册或切换目标时，Worker 会先向 Muse 查询会话是否存在，查询过程不会发送消息。要继续原有对话，请使用设备发消息时使用的会话 ID。Worker 无法加载配对信息或尚未选定目标对话时，已通过身份验证的通知请求将收到 HTTP `503`。
 
 轮换 Webhook 或 MCP 令牌时，在 Cloudflare 更新对应的 Worker 密钥并部署，再更新使用该令牌的发送端或连接器。
 
@@ -101,4 +109,6 @@ registerWebhook(app, 'ci', [
 
 ## 可选的 CLI 配置
 
-在 Node.js 22.12 或更高版本中，运行 `npm ci` 和 `npm run setup -- --pairing /path/to/pairing.json`。使用社区登录状态时将参数换为 `--device-state /path/to/state.json`。编辑生成的 `.dev.vars`，补全设备凭据。对于新 Worker，请将生成的 `CREDENTIAL_ENCRYPTION_KEY` 备份到密码管理器中。部署已有 Worker 时，请使用原密钥。新配置不会预选目标对话。部署后请通过 MCP 注册。已有的 `MUSE_SESSION_ID` 会予以保留，包括旧版 `.env.bridge` 中的设置。运行 `npx wrangler login` 后，用 `npm run deploy:local` 上传设置。使用 `npm test`、`npm run check` 和 `npm run deploy -- --dry-run` 进行本地验证。在 `npm run dev` 中发送真实消息时，请使用单独的设备凭据。尚未验证向真实 Muse 账户投递。
+在 Node.js 22.12 或更高版本中，运行 `npm ci` 和 `npm run setup -- --pairing /path/to/pairing.json`。使用社区登录状态时将参数换为 `--device-state /path/to/state.json`。编辑生成的 `.dev.vars`，补全设备凭据。该脚本还会分别生成自定义 Webhook 和只读 MCP 的令牌。对于新 Worker，请将生成的 `CREDENTIAL_ENCRYPTION_KEY` 备份到密码管理器中。部署已有 Worker 时，请使用原密钥。运行 `npx wrangler login` 后，用 `npm run deploy:local` 上传设置。部署完成后，通过 MCP 注册目标对话。使用 `npm test`、`npm run check` 和 `npm run deploy -- --dry-run` 进行本地验证。在 `npm run dev` 中发送真实消息时，请使用单独的设备凭据。尚未验证向真实 Muse 账户投递。
+
+如果已在 Cloudflare 中删除三个设备密钥，请在下次从本地部署前移除 `.dev.vars` 中对应的三项。

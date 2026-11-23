@@ -11,36 +11,42 @@ Prepare one device identity exclusively for this Worker. Get the SDK token from 
 
 For community sign-in, open `muse-auth/.state/state.json` in your private Codespace editor and copy only `sdk_token`, `device.device_id`, and `device.refresh_token` to the corresponding Worker secrets in the deployment form. Keep the full file and the account’s session credentials inside your Codespace. Once the Worker has the device credentials, you can delete the Codespace. [Deployment steps](../README.md#quick-start)
 
+For the first deployment, set these five Worker secrets. Generate an independent random bearer token for `MCP_ADMIN_TOKEN` and a separate 32-byte random key encoded as 64 hexadecimal characters for `CREDENTIAL_ENCRYPTION_KEY`. Enter the three device values together as `MUSE_NODE_ID`, `MUSE_SDK_TOKEN`, and `MUSE_REFRESH_TOKEN`. The admin connector also needs your Worker’s `/mcp` URL and the existing side chat’s session ID.
+
+Register the side chat with the admin connector and confirm that a test notification reaches it. You can then remove all three device secrets together in one deployment. Keep `MCP_ADMIN_TOKEN` and the original `CREDENTIAL_ENCRYPTION_KEY`. On its next start, the Worker uses the encrypted pairing in its Durable Object. Supplying just one or two of the three device values blocks delivery until the configuration is complete or all three are removed.
+
+For Shortcuts and other senders using `/v1/hooks/custom`, set a separate random Worker secret named `HOOK_TOKEN`. For a read-only MCP connector, set another independent secret named `MCP_TOKEN`.
+
 ## Trace a notification
 
 Ask Muse to check the delivery status for the receipt ID. You can also repeat the original webhook with the same `Idempotency-Key` before setting up the connector.
 
 | State | What it means |
 | --- | --- |
-| `queued` | Waiting for a Worker delivery attempt. Check that the Muse secrets are set, the device authorization is current, and a VM is leased to the device. |
+| `queued` | Waiting for a Worker delivery attempt. Check the saved pairing, device authorization, and VM lease. |
 | `sending` | The Worker has claimed this event and is connecting or posting. |
 | `sent` | Muse acknowledged the post. Open the side chat selected when the Worker accepted the notification. |
-| `suppressed` | The source was paused or the event type was excluded. Delivery has ended. |
+| `suppressed` | The Worker stopped delivery. A source rule, a retracted message, or the circuit breaker can suppress a queued event. `message_retracted` means Slack or X deleted the message, or LINE withdrew it, before delivery. For a breaker decision, check the receipt's `reason`. `source_open` means this source reached its limit. `circuit_open` means the combined attempt count reached the global limit. The Worker checks that the chat exists immediately before posting. A `side_chat_missing` receipt means Muse returned 404. Select an existing chat through MCP to resume new deliveries. Previously suppressed notifications stay suppressed. |
 | `expired` | The notification waited for one hour after receipt. Its delivery window has closed. |
 | `unknown` | The Worker could not confirm the outcome after a possible send, or the two-minute delivery authorization expired. Check the side chat before sending another notification. |
 
-A failure known to have occurred before submission can be retried within the delivery limits. If the post may already have reached Muse, the Worker records `unknown` and leaves the decision to you. This avoids duplicating a post when its acknowledgement is lost. [Gadget SDK chat transport](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/link_client.py)
+If a delivery fails before submission, other chats can still receive notifications while that delivery waits for a retry. If the post may already have reached Muse, the Worker records `unknown` and leaves the decision to you. This avoids duplicating a post when its acknowledgement is lost. [Gadget SDK chat transport](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/link_client.py)
 
-## Migrate stored credentials
+Each receipt keeps its device pairing, VM and session ID. If you change the pairing or VM configuration, restore it before expiry to resume waiting deliveries. Register the destination through MCP for each new pairing.
 
-1. Before upgrading an existing Worker, open **Settings → Variables and Secrets** in Cloudflare. Set `CREDENTIAL_ENCRYPTION_KEY` as a **Secret** using the dedicated 64-character hexadecimal key from the [deployment instructions](../README.md#quick-start). If you already set it for this Worker, keep the same value. A fresh local setup generates its own key, so restore the deployed Worker's key in `.dev.vars` before using `npm run deploy:local` for that Worker.
-2. Deploy the update and call `get_setup_status` through your authenticated Muse connector. Confirm that `credentialStorageReady` is `true`. If it is `false`, check the secret and restore the original key from your backup. Starting the Durable Object migrates its existing Muse device tokens and any saved Bluesky session to AES-256-GCM ciphertext. The Worker also encrypts future token updates. Decrypting a copied credential record requires the separate Worker secret. Retain the key in your private password manager across deployments and restores. If you accidentally replace it, restore the original value to read the saved tokens.
-3. Earlier exports and point-in-time recovery snapshots can still contain the old plaintext. If one was exposed, revoke the affected Muse device authorization and authorize a fresh device. For exposed Bluesky tokens, revoke the affected sessions, revoke the app password, then issue a new one. Update the corresponding Worker secrets before resuming delivery. [Cloudflare storage recovery](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#point-in-time-recovery-api)
+## Recover the credential encryption key
+
+The Worker encrypts saved Muse device tokens and Bluesky sessions with AES-256-GCM. Keep `CREDENTIAL_ENCRYPTION_KEY` in your password manager. Use the same key for each deployment of this Worker. If `get_setup_status` reports `credentialStorageReady: false`, check the Worker secret and restore the original value from your backup. A replacement key cannot open records encrypted with the lost key. If the original key is unavailable, deploy a new Worker with fresh storage and perform the initial setup with a newly authorized pairing.
 
 ## Renew device authorization
 
-After handoff, the Worker saves rotated device credentials in its Durable Object. Keep other executors, local development environments, and Worker deployments off that identity. If Muse revokes the pairing, authorize a fresh device credential, update its Worker secrets in Cloudflare, and deploy the changes. Existing registrations remain in the Durable Object.
+If Muse revokes the pairing, authorize a dedicated device again and deploy all three new device values together. Register the side chat for the new pairing and confirm a test notification before removing those three settings. A fresh Durable Object also needs the initial setup. Keep each authorized device identity exclusive to one running Worker or SDK daemon.
 
-The Worker uses the standard device API at `api.muse.ai` and the encrypted Link gateway at `hatch.metaaivm.com`. If you set `MUSE_VM_ID`, check that a lease exists for that exact VM. Otherwise the Worker selects the default leased VM, falling back to the first available lease. [Gadget SDK device API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
+The Worker uses the standard device API at `api.muse.ai` and the encrypted Link gateway at `hatch.metaaivm.com`. If you set `MUSE_VM_ID`, check that a lease exists for that exact VM. Without an explicit VM, registration uses the default lease or the first available lease. Selecting a verified name again uses its saved VM. To move the name to the current default VM, call `register_side_chat` again with the name and session ID. [Gadget SDK device API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 
 ## Send a webhook
 
-Send `POST /hooks/custom` with `HOOK_TOKEN` as the Bearer token. Its source name in MCP is `default`, so existing pause and filter rules still apply.
+Send `POST /v1/hooks/custom` with `HOOK_TOKEN` as the Bearer token. Use `custom` as the source name in MCP pause and filter rules.
 
 | Input | Behavior |
 | --- | --- |
@@ -75,7 +81,7 @@ registerWebhook(app, 'ci', [
 })
 ```
 
-After redeploying, send notifications to `POST /hooks/ci`. To verify a source-specific signature, read `c.req.raw.clone()` in middleware before decoding the body. You can add rate limits or filters after authentication. The Durable Object enforces the shared delivery limit across locations. [Hono middleware](https://hono.dev/docs/guides/middleware) · [Durable Object SQLite storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
+After redeploying, send notifications to `POST /v1/hooks/ci`. To verify a source-specific signature, read `c.req.raw.clone()` in middleware before decoding the body. You can add rate limits or filters after authentication. The Durable Object enforces the shared delivery limit across locations. [Hono middleware](https://hono.dev/docs/guides/middleware) · [Durable Object SQLite storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
 
 ## MCP tools
 
@@ -88,10 +94,12 @@ After redeploying, send notifications to `POST /hooks/ci`. To verify a source-sp
 | `set_active_side_chat` | `name`. Selects an existing registration for future notifications. | Admin |
 | `list_sources` | No arguments. Lists sources with receipt history or delivery rules. | Read |
 | `get_delivery_status` | `id` (receipt ID). Returns delivery metadata without the event body. | Read |
+| `get_delivery_breaker` | Returns the global budget and attempts used by each source. | Read |
+| `rearm_delivery_breaker` | `expectedGeneration`. Resets both budgets once a limit is reached and all in-flight sends finish. | Recovery |
 | `set_source_paused` | `source`, `paused` (boolean). | Admin |
 | `set_event_filter` | `source`, `types` (array of allowed event types). An empty array allows all types. | Admin |
 
-Registration names are case-sensitive, with 1 to 64 characters after trimming. Start with a Unicode letter or number. You may then use letters, numbers, combining marks, spaces, periods, underscores, and hyphens. Session IDs are case-sensitive and accept 1–64 ASCII letters, digits or hyphens. Registration records the ID you give it without posting a test message. Use the original gadget session ID to continue an existing chat. A valid legacy `MUSE_SESSION_ID` appears as `default` on upgrade. An authenticated notification returns HTTP `503` until there is an active destination and the device secrets are configured.
+Registration names are case-sensitive, with 1 to 64 characters after trimming. Start with a Unicode letter or number. You may then use letters, numbers, combining marks, spaces, periods, underscores, and hyphens. Session IDs are case-sensitive and accept 1–64 ASCII letters, digits or hyphens. Registration and selection verify that the session exists on Muse before changing the destination. Use the original gadget session ID to continue an existing chat. An authenticated notification returns HTTP `503` until the Worker can load the pairing and has an active destination.
 
 To rotate webhook or MCP tokens, update the corresponding Worker secrets in Cloudflare and deploy the changes. Update the sender or connector that uses each token.
 
@@ -101,4 +109,6 @@ With the Muse Gadget SDK checked out at `e17081a45941415d483642dbe21c2a2e6ef85a1
 
 ## Optional CLI setup
 
-With Node.js 22.12 or later, run `npm ci` and `npm run setup -- --pairing /path/to/pairing.json`. For community sign-in use `--device-state /path/to/state.json` instead. Complete the device credentials in the generated `.dev.vars`. For a new Worker, back up its generated `CREDENTIAL_ENCRYPTION_KEY` in your password manager. For an existing Worker, use its original key before deploying. A fresh configuration leaves the chat unselected. Register it through MCP after deployment. An existing `MUSE_SESSION_ID`, including one from a previous `.env.bridge`, is preserved. Run `npx wrangler login`, then `npm run deploy:local` to upload the settings. Use `npm test`, `npm run check`, and `npm run deploy -- --dry-run` for local verification. Use separate device credentials for live `npm run dev` sessions. Delivery to a live Muse account has not been verified.
+With Node.js 22.12 or later, run `npm ci` and `npm run setup -- --pairing /path/to/pairing.json`. For community sign-in use `--device-state /path/to/state.json` instead. Complete the device credentials in the generated `.dev.vars`. The script also generates separate tokens for custom webhooks and read-only MCP access. For a new Worker, back up its generated `CREDENTIAL_ENCRYPTION_KEY` in your password manager. For an existing Worker, use its original key before deploying. Run `npx wrangler login`, then `npm run deploy:local` to upload the settings. Register the destination through MCP. Use `npm test`, `npm run check`, and `npm run deploy -- --dry-run` for local verification. Use separate device credentials for live `npm run dev` sessions. Delivery to a live Muse account has not been verified.
+
+Before the next local deployment, remove the three device assignments from `.dev.vars` if you removed them in Cloudflare.

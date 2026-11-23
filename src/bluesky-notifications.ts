@@ -20,7 +20,7 @@ const credentials = z.object({
   accessJwt: token,
   refreshJwt: token,
 })
-type Session = z.infer<typeof credentials>
+export type BlueskySession = z.infer<typeof credentials>
 type CheckpointStore = {
   get<T>(key: typeof checkpointKey): Promise<T | undefined>
   put(key: typeof checkpointKey, value: BlueskyCheckpoint): Promise<void>
@@ -64,7 +64,7 @@ export async function pollBlueskyNotifications(
 ) {
   const fingerprint = await blueskyKey(JSON.stringify([identifier, password]))
   const stored = await credentialsStore.get(sessionKey)
-  async function save(response: Response): Promise<Session> {
+  async function save(response: Response): Promise<BlueskySession> {
     if (!response.ok)
       throw new Error('Bluesky authentication failed (HTTP ' + response.status + ')')
     const session = credentials.parse(await response.json())

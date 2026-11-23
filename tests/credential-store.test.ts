@@ -3,23 +3,8 @@ import { test } from 'node:test'
 import { CredentialStore } from '../src/credential-store.ts'
 
 const key = 'ab'.repeat(32)
-const device = {
-  fingerprint: '1'.repeat(64),
-  credentials: {
-    accessToken: 'example-muse-access',
-    refreshToken: 'example-muse-refresh',
-    savedAt: 10,
-  },
-}
-const sessionName = 'bluesky-notifications.session'
-const session = {
-  fingerprint: '2'.repeat(64),
-  session: {
-    did: 'did:plc:example',
-    accessJwt: 'example-bsky-access',
-    refreshJwt: 'example-bsky-refresh',
-  },
-}
+const pairing = 'device:test-a'
+const tokens = { nodeId: 'test-123abc', sdkToken: 'mgst_' + 'A'.repeat(43), refreshToken: 'example-refresh', access: { token: 'example-access', savedAt: 10 } }
 
 function storage() {
   const records = new Map<string, unknown>()
@@ -31,123 +16,78 @@ function storage() {
     async put<T>(name: string, value: T) {
       records.set(name, structuredClone(value))
     },
+    async list<T>({ prefix, limit }: { prefix: string; limit: number }) {
+      return new Map([...records].filter(([name]) => name.startsWith(prefix)).slice(0, limit)) as Map<string, T>
+    },
   }
 }
 
-test('writes authenticated ciphertext under a fresh nonce, including the credential fingerprint', async () => {
-  const raw = storage()
-  const store = new CredentialStore(raw, key)
-  await store.put('device', device)
-  const first = await raw.get<{ version: number; iv: ArrayBuffer; ciphertext: ArrayBuffer }>(
-    'device',
-  )
-  assert.ok(first)
-  assert.deepEqual(Object.keys(first).sort(), ['ciphertext', 'iv', 'version'])
-  assert.equal(first.iv.byteLength, 12)
-  assert.equal(first.ciphertext.byteLength, Buffer.byteLength(JSON.stringify(device)) + 16)
-  for (const value of [
-    device.fingerprint,
-    device.credentials.accessToken,
-    device.credentials.refreshToken,
-  ]) {
-    assert.equal(Buffer.from(first.ciphertext).includes(Buffer.from(value)), false)
+test('stores one encrypted record per pairing and uses a fresh nonce on every write', async () => {
+  const data = storage()
+  const store = new CredentialStore(data, key)
+  await store.initialize(null)
+  await store.put(pairing, tokens)
+  const slot = 'credentials:' + pairing
+  const first = await data.get<ArrayBuffer>(slot)
+  assert.ok(first instanceof ArrayBuffer)
+  assert.equal(Buffer.from(first).includes(Buffer.from(tokens.refreshToken)), false)
+  for (const value of [tokens.nodeId, tokens.sdkToken, tokens.access.token]) {
+    assert.equal(Buffer.from(first).includes(Buffer.from(value)), false)
   }
-  await store.put('device', device)
-  assert.notDeepEqual(first.iv, (await raw.get<typeof first>('device'))!.iv)
-  assert.deepEqual(await new CredentialStore(raw, key).get('device'), device)
+  await store.put(pairing, tokens)
+  const second = await data.get<ArrayBuffer>(slot)
+  assert.ok(second instanceof ArrayBuffer)
+  assert.notDeepEqual(second.slice(0, 12), first.slice(0, 12))
+  assert.equal(data.records.size, 1)
+  const reopened = new CredentialStore(data, key)
+  await reopened.initialize(null)
+  assert.deepEqual(await reopened.get(pairing), tokens)
 })
 
-test('missing or invalid keys prevent any migration or credential write', async () => {
+test('missing or malformed keys prevent initialization and credential access', async () => {
   for (const invalid of [undefined, '', 'A'.repeat(63), key + '\n', 'z'.repeat(64)]) {
-    const raw = storage()
-    await raw.put('device', device)
-    const store = new CredentialStore(raw, invalid)
-    for (const call of [
-      () => store.migrate(),
-      () => store.put(sessionName, session),
-      () => store.get('device'),
-    ]) {
+    const data = storage()
+    const store = new CredentialStore(data, invalid)
+    for (const call of [() => store.initialize(null), () => store.put(pairing, tokens), () => store.get(pairing)]) {
       await assert.rejects(call, /CREDENTIAL_ENCRYPTION_KEY/)
     }
-    assert.deepEqual([...raw.records], [['device', device]])
+    assert.equal(data.records.size, 0)
   }
 })
 
-test('migrates both legacy records once and keeps unrelated storage intact', async () => {
-  const raw = storage()
-  await raw.put('device', device)
-  await raw.put(sessionName, session)
-  await raw.put('checkpoint', { head: 'x' })
-  const store = new CredentialStore(raw, key)
-  await assert.rejects(store.get('device'))
-  await store.migrate()
-  const encrypted = structuredClone(raw.records)
-  assert.notDeepEqual(encrypted.get('device'), device)
-  assert.notDeepEqual(encrypted.get(sessionName), session)
-  assert.deepEqual(encrypted.get('checkpoint'), { head: 'x' })
-  await store.migrate()
-  assert.deepEqual(raw.records, encrypted)
-  assert.deepEqual(await store.get('device'), device)
-  assert.deepEqual(await store.get(sessionName), session)
+test('initialization checks the active pairing even when another credential is readable', async () => {
+  const data = storage()
+  const store = new CredentialStore(data, key)
+  await store.put('bluesky-notifications.session', {
+    fingerprint: 'test', session: { did: 'did:plc:test', accessJwt: 'access', refreshJwt: 'refresh' },
+  })
+  await store.put(pairing, tokens)
+  const saved = (await data.get<ArrayBuffer>('credentials:' + pairing))!
+  const damaged = saved.slice(0)
+  new Uint8Array(damaged)[12] ^= 1
+  await data.put('credentials:' + pairing, damaged)
+  await assert.rejects(store.initialize('test-a'), /Cannot open credentials/)
+  await data.put('credentials:' + pairing, saved)
+  await store.initialize('test-a')
+  assert.deepEqual(await store.get(pairing), tokens)
 })
 
-test('rejects a wrong key, swapped records, corrupt ciphertext and malformed legacy data without overwriting records', async () => {
-  const raw = storage()
-  const store = new CredentialStore(raw, key)
-  await store.put(sessionName, session)
-  const encrypted = (await raw.get<{ version: number; iv: ArrayBuffer; ciphertext: ArrayBuffer }>(
-    sessionName,
-  ))!
-  const corrupt = structuredClone(encrypted)
-  new Uint8Array(corrupt.ciphertext)[0] ^= 1
-  const wrongKey = new CredentialStore(raw, 'cd'.repeat(32))
-  await raw.put('device', device)
-  await assert.rejects(wrongKey.migrate())
-  assert.deepEqual(raw.records.get('device'), device)
-  await assert.rejects(wrongKey.get(sessionName))
-  await raw.put('device', encrypted)
-  await assert.rejects(store.get('device'))
-  for (const broken of [
-    corrupt,
-    { ...encrypted, version: 2 },
-    { ...session, version: 2 },
-    session.session,
-    null,
-  ]) {
-    await raw.put('device', device)
-    await raw.put(sessionName, broken)
-    const before = structuredClone(raw.records)
-    await assert.rejects(
-      store.migrate(),
-      (error: Error) =>
-        !error.message.includes(session.session.accessJwt) &&
-        !error.message.includes(session.fingerprint),
-    )
-    assert.deepEqual(raw.records, before)
+test('rejects a wrong key, damaged ciphertext, plaintext, and credentials copied between slots', async () => {
+  const data = storage()
+  const store = new CredentialStore(data, key)
+  await store.put(pairing, tokens)
+  const sealed = (await data.get<ArrayBuffer>('credentials:' + pairing))!
+  await assert.rejects(new CredentialStore(data, 'cd'.repeat(32)).initialize(null), /Cannot open credentials/)
+  const corrupt = sealed.slice(0)
+  new Uint8Array(corrupt)[12] ^= 1
+  for (const invalid of [corrupt, tokens, null]) {
+    await data.put('credentials:' + pairing, invalid)
+    await assert.rejects(store.get(pairing), /Cannot open credentials/)
+    await assert.rejects(store.initialize(null), /Cannot open credentials/)
+    assert.deepEqual(await data.get('credentials:' + pairing), invalid)
   }
-})
-
-test('resumes a migration interrupted between records without replacing the first ciphertext', async () => {
-  const raw = storage()
-  await raw.put('device', device)
-  await raw.put(sessionName, session)
-  const io = new Error('storage unavailable')
-  const interrupted = new CredentialStore(
-    {
-      get: raw.get,
-      async put(name, value) {
-        if (name === sessionName) throw io
-        await raw.put(name, value)
-      },
-    },
-    key,
-  )
-  await assert.rejects(interrupted.migrate(), (error) => error === io)
-  const done = structuredClone(raw.records.get('device'))
-  assert.notDeepEqual(done, device)
-  assert.deepEqual(raw.records.get(sessionName), session)
-  const restarted = new CredentialStore(raw, key)
-  await restarted.migrate()
-  assert.deepEqual(raw.records.get('device'), done)
-  assert.deepEqual(await restarted.get(sessionName), session)
+  for (const name of ['device:test-b', 'bluesky-notifications.session'] as const) {
+    await data.put('credentials:' + name, sealed)
+    await assert.rejects(store.get(name), /Cannot open credentials/)
+  }
 })

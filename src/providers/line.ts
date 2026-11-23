@@ -21,7 +21,7 @@ const webhook = z.object({
         .object({ id: z.string(), type: z.string(), text: z.string().optional() })
         .optional(),
       postback: z.object({ data: z.string() }).optional(),
-      unsend: z.object({ messageId: z.string() }).optional(),
+      unsend: z.object({ messageId: z.string().min(1).max(128) }).optional(),
     }),
   ),
 })
@@ -45,8 +45,12 @@ export async function line(
   const parsed = webhook.safeParse(parseJson(body))
   if (!parsed.success) throw new HTTPException(400, { message: 'Invalid LINE event batch' })
   return {
+    retractedMessageIds: parsed.data.events.flatMap((event) =>
+      event.type === 'unsend' && event.unsend ? [event.unsend.messageId] : [],
+    ),
     events: parsed.data.events.map(({ webhookEventId, ...event }) => ({
       key: webhookEventId,
+      messageId: event.type === 'message' ? event.message?.id : undefined,
       type: event.type.toLowerCase(),
       text: JSON.stringify(event),
     })),

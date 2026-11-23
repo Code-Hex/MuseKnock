@@ -7,7 +7,6 @@ const refreshAfterMs = 3 * 60 * 60 * 1000
 
 const token = z.string().regex(/^[\x21-\x7e]+$/)
 const { refreshToken } = museDeviceSchema.shape
-const credentials = z.object({ accessToken: token, refreshToken, savedAt: z.number().finite() })
 const rotated = z.object({ access_token: token, refresh_token: refreshToken })
 const listing = z.object({
   vm_list: z.array(z.unknown()),
@@ -23,7 +22,6 @@ const lease = z.object({
   default: z.boolean().optional(),
 })
 
-export type DeviceCredentials = z.infer<typeof credentials>
 type AccountRequest = (url: string, options: RequestInit) => Promise<Response>
 
 function accountRequest(request: AccountRequest, path: string, options: RequestInit) {
@@ -36,11 +34,10 @@ function accountRequest(request: AccountRequest, path: string, options: RequestI
 
 async function rotate(
   config: MuseDevice,
-  previousRefresh: string,
-  persist: (next: DeviceCredentials) => Promise<void>,
+  persist: (next: MuseDevice) => Promise<void>,
   request: AccountRequest,
 ) {
-  const raw = previousRefresh.replace(/^hatch_refresh:/, '')
+  const raw = config.refreshToken.replace(/^hatch_refresh:/, '')
   const response = await accountRequest(request, '/device_token/refresh', {
     method: 'POST',
     headers: { Authorization: 'Bearer hatch_refresh:' + raw, 'Content-Type': 'application/json' },
@@ -54,9 +51,9 @@ async function rotate(
   )
   if (!tokens.success) throw new Error('Invalid Muse device refresh response')
   const next = {
-    accessToken: tokens.data.access_token,
+    ...config,
+    access: { token: tokens.data.access_token, savedAt: Date.now() },
     refreshToken: tokens.data.refresh_token,
-    savedAt: Date.now(),
   }
   await persist(next)
   return next
@@ -69,24 +66,21 @@ function fetchLeases(accessToken: string, request: AccountRequest) {
   })
 }
 
-export async function getMuseVm(
+export async function getMuseVms(
   config: MuseDevice,
-  saved: DeviceCredentials | undefined,
-  persist: (next: DeviceCredentials) => Promise<void>,
+  vmId: string | undefined,
+  persist: (next: MuseDevice) => Promise<void>,
   request: AccountRequest = fetch,
-): Promise<{ noiseHost: string; vmId: string; vmToken: string }> {
+) {
   if (!museDeviceSchema.safeParse(config).success) throw new Error('Invalid Muse device configuration')
-  if (saved && !credentials.safeParse(saved).success)
-    throw new Error('Invalid saved Muse device credentials')
-  const age = saved ? Date.now() - saved.savedAt : 0
-  const cached = saved && age >= 0 && age < refreshAfterMs ? saved : undefined
-  let pair =
-    cached ?? (await rotate(config, saved?.refreshToken ?? config.refreshToken, persist, request))
-  let response = await fetchLeases(pair.accessToken, request)
+  const age = config.access ? Date.now() - config.access.savedAt : -1
+  const cached = age >= 0 && age < refreshAfterMs ? config.access : undefined
+  const access = cached ?? (await rotate(config, persist, request)).access
+  let response = await fetchLeases(access.token, request)
   if (response.status === 401 && cached) {
     await response.body?.cancel()
-    pair = await rotate(config, pair.refreshToken, persist, request)
-    response = await fetchLeases(pair.accessToken, request)
+    const next = await rotate(config, persist, request)
+    response = await fetchLeases(next.access.token, request)
   }
   if (!response.ok) throw new Error('Muse VM lookup failed (HTTP ' + response.status + ')')
   const result = listing.safeParse(await response.json().catch(() => null))
@@ -97,13 +91,13 @@ export async function getMuseVm(
   const available = result.data.vm_list.flatMap((entry) => {
     const item = lease.safeParse(entry)
     if (!item.success || !(item.data.vm_ws_url || item.data.vm_url)) return []
-    const vmId = item.data.vm_id || item.data.vm_name
-    return vmId ? [{ vmId, vmToken: item.data.vm_auth_token, isDefault: item.data.default }] : []
+    const id = item.data.vm_id || item.data.vm_name
+    if (!id || (vmId && id !== vmId)) return []
+    return [{ vmId: id, vmToken: item.data.vm_auth_token, isDefault: item.data.default === true }]
   })
-  const selected = config.vmId
-    ? available.find((vm) => vm.vmId === config.vmId)
-    : (available.find((vm) => vm.isDefault) ?? available[0])
-  if (!selected)
-    throw new Error(config.vmId ? 'No lease for the requested VM' : 'No leased Muse VM')
-  return { noiseHost, vmId: selected.vmId, vmToken: selected.vmToken }
+  if (!available.length)
+    throw new Error(vmId ? 'No lease for the requested VM' : 'No leased Muse VM')
+  return available
+    .sort((a, b) => Number(b.isDefault) - Number(a.isDefault))
+    .map(({ vmId, vmToken }) => ({ noiseHost, vmId, vmToken }))
 }

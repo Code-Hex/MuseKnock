@@ -2,14 +2,15 @@ import type { Hono, MiddlewareHandler } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { HTTPException } from 'hono/http-exception'
 import { identifier } from './identifiers.ts'
-import { museDevice, type Inbox, type MuseBindings } from './inbox.ts'
+import type { Inbox, MuseBindings } from './inbox.ts'
 
 export type WorkerEnv = {
   Bindings: MuseBindings & {
     INBOX: DurableObjectNamespace<Inbox>
-    HOOK_TOKEN: string
-    MCP_TOKEN: string
+    HOOK_TOKEN?: string
+    MCP_TOKEN?: string
     MCP_ADMIN_TOKEN: string
+    MCP_RECOVERY_TOKEN?: string
     GITHUB_WEBHOOK_SECRET?: string
     X_OAUTH2_CLIENT_SECRET?: string
     SLACK_SIGNING_SECRET?: string
@@ -46,14 +47,12 @@ async function decodeText(request: Request): Promise<string> {
 
 export function registerWebhook(
   app: Hono<WorkerEnv>,
-  route: string | { slug: string; source: string },
+  source: string,
   middleware: [MiddlewareHandler<WorkerEnv>, ...MiddlewareHandler<WorkerEnv>[]],
   decode: (request: Request) => Promise<string> = decodeText,
 ) {
-  const { slug, source } = typeof route === 'string' ? { slug: route, source: route } : route
-  if (!identifier.test(slug) || !identifier.test(source)) throw new Error('Invalid webhook name')
-  app.post('/hooks/' + slug, bodyLimit({ maxSize: 32 * 1024 }), ...middleware, async (c) => {
-    if (!museDevice(c.env)) return c.text('Configure the Muse device first', 503)
+  if (!identifier.test(source)) throw new Error('Invalid webhook name')
+  app.post('/v1/hooks/' + source, bodyLimit({ maxSize: 32 * 1024 }), ...middleware, async (c) => {
     const type = c.req.header('X-Event-Type') ?? 'notification'
     const key = c.req.header('Idempotency-Key') ?? crypto.randomUUID()
     if (!identifier.test(type) || !/^[!-~]{1,128}$/.test(key)) {
@@ -62,9 +61,12 @@ export function registerWebhook(
     const text = await decode(c.req.raw)
     if (!text.trim()) return c.text('Empty event', 400)
     if (new TextEncoder().encode(text).length > 32 * 1024) return c.text('Event too large', 413)
-    const receipt = await inbox(c.env).enqueue({ source, key, type, text })
+    const parentId = c.req.header('X-MuseKnock-Parent')?.toLowerCase()
+    const receipt = await inbox(c.env).enqueue({ source, key, type, text, parentId })
+    if ('invalidBreaker' in receipt) return c.text('Correct CIRCUIT_BREAKER and retry', 503)
     if ('credentialStorageUnavailable' in receipt)
       return c.text('Credential storage is unavailable', 503)
+    if ('missingDevice' in receipt) return c.text('Configure the Muse device first', 503)
     if ('noDestination' in receipt) return c.text('Register a destination side chat first', 503)
     if ('limited' in receipt) {
       c.header('Retry-After', '60')

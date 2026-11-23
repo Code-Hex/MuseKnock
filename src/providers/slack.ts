@@ -1,7 +1,7 @@
 import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
 import { identifier } from '../identifiers.ts'
-import { parseJson, verifyHmac, type ProviderDelivery } from '../provider.ts'
+import { maxEventBytes, parseJson, verifyHmac, type ProviderDelivery } from '../provider.ts'
 import type { WorkerEnv } from '../webhook.ts'
 
 const envelope = z.object({ type: z.string().min(1) })
@@ -16,10 +16,34 @@ const eventCallback = z.object({
     channel: entity.optional().catch(undefined),
     user: entity.optional().catch(undefined),
     text: z.string().optional(),
+    ts: z.string().optional(),
+    deleted_ts: z.string().optional(),
     reaction: z.string().optional(),
-    message: z.object({ text: z.string().optional() }).optional().catch(undefined),
+    item: z.object({ type: z.literal('message'), channel: z.string(), ts: z.string() }).optional().catch(undefined),
+    message: z
+      .object({ text: z.string().optional(), ts: z.string().optional() })
+      .optional()
+      .catch(undefined),
   }),
 })
+
+function summarize({ team_id, event }: z.infer<typeof eventCallback>): string {
+  const fields = { team_id, ...event }
+  const encoder = new TextEncoder()
+  let json = JSON.stringify(fields)
+  for (
+    let limit = 4_000;
+    encoder.encode(json).byteLength > maxEventBytes;
+    limit = Math.floor(limit / 2)
+  ) {
+    json = JSON.stringify({ ...fields, truncated: true }, (_key, value: unknown) =>
+      typeof value === 'string' && value.length > limit
+        ? Array.from(value).slice(0, limit).join('')
+        : value,
+    )
+  }
+  return json
+}
 
 export async function slack(
   request: Request,
@@ -62,8 +86,20 @@ export async function slack(
   const parsed = eventCallback.safeParse(json)
   if (!parsed.success) throw new HTTPException(400, { message: 'Invalid Slack event callback' })
   const { event_id, team_id, event } = parsed.data
+  const channel = typeof event.channel === 'string' ? event.channel : event.channel?.id
+  const deleted = event.type === 'message' && event.subtype === 'message_deleted'
+  const ts = deleted ? event.deleted_ts : event.message?.ts ?? event.ts
+  const messageKey = channel && ts && (event.type === 'message' || event.type === 'app_mention')
+    ? JSON.stringify([team_id, channel, ts])
+    : undefined
   return {
-    events: [{ key: event_id, type: event.type, text: JSON.stringify({ team_id, ...event }) }],
+    retractedMessageIds: deleted && messageKey ? [messageKey] : undefined,
+    events: [{
+      key: event_id,
+      messageId: deleted ? undefined : messageKey,
+      type: event.type,
+      text: summarize(parsed.data),
+    }],
     response,
   }
 }

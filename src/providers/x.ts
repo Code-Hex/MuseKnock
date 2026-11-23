@@ -59,13 +59,15 @@ export async function x(request: Request, env: WorkerEnv['Bindings']): Promise<P
   const event = post.safeParse(data)
   if (!event.success) throw new HTTPException(400, { message: 'Invalid X Post activity' })
   const { event_uuid, payload } = event.data
-  const text =
-    data.event_type === 'post.create' ? (payload.note_tweet?.text ?? payload.text) : undefined
+  const deleted = data.event_type === 'post.delete'
+  const text = deleted ? undefined : (payload.note_tweet?.text ?? payload.text)
   return {
+    retractedMessageIds: deleted ? [payload.id] : undefined,
     events: [
       {
         key: event_uuid,
-        type: data.event_type === 'post.create' ? 'post_create' : 'post_delete',
+        messageId: deleted ? undefined : payload.id,
+        type: deleted ? 'post_delete' : 'post_create',
         text: JSON.stringify({
           id: payload.id,
           author_id: payload.author_id,

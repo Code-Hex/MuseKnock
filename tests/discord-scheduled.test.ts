@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Response } from 'miniflare'
-import { startWorker } from './worker.ts'
+import { startConfiguredWorker } from './worker.ts'
 import { connect } from './mcp-client.ts'
 
 test('a scheduled Discord channel poll baselines existing messages and queues new messages', async (t) => {
@@ -9,7 +9,7 @@ test('a scheduled Discord channel poll baselines existing messages and queues ne
   const base = '1420000000000000001'
   const next = '1420000000000000002'
   const lastSeen: (string | null)[] = []
-  const worker = await startWorker(
+  const worker = await startConfiguredWorker(
     (req) => {
       const url = new URL(req.url)
       if (url.origin !== 'https://discord.com') return new Response(null, { status: 503 })

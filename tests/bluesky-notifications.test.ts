@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { serialize } from 'node:v8'
 import { Response as WorkerResponse } from 'miniflare'
-import { startWorker } from './worker.ts'
+import { startConfiguredWorker } from './worker.ts'
 import { connect } from './mcp-client.ts'
 import { CredentialStore } from '../src/credential-store.ts'
 import { pollBlueskyNotifications } from '../src/bluesky-notifications.ts'
@@ -21,6 +21,9 @@ function store() {
     saved,
     async get<T>(key: string) {
       return saved.get(key) as T | undefined
+    },
+    async list<T>({ prefix, limit }: { prefix: string; limit: number }) {
+      return new Map([...saved].filter(([key]) => key.startsWith(prefix)).slice(0, limit)) as Map<string, T>
     },
     async put<T>(key: string, value: T) {
       saved.set(key, structuredClone(value))
@@ -145,7 +148,7 @@ test('Bluesky refreshes expired tokens, saves rotations and signs in again only 
 test('the scheduled Worker polls the account notification endpoint and queues only new activity', async (t) => {
   let reads = 0
   let logins = 0
-  const worker = await startWorker(
+  const worker = await startConfiguredWorker(
     async (req) => {
       const url = new URL(req.url)
       if (url.origin !== 'https://bsky.social') return new WorkerResponse(null, { status: 503 })

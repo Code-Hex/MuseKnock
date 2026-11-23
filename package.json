@@ -32,12 +32,6 @@
   },
   "cloudflare": {
     "bindings": {
-      "HOOK_TOKEN": {
-        "description": "Generate a unique random token in your password manager for webhook senders."
-      },
-      "MCP_TOKEN": {
-        "description": "Generate a separate random token for read-only Muse connectors."
-      },
       "MCP_ADMIN_TOKEN": {
         "description": "Generate a separate random token for your admin Muse connector. Save it for the Bearer token field in Muse."
       },
@@ -45,13 +39,13 @@
         "description": "Generate a separate 32-byte random key (64 hexadecimal characters). Back it up in your password manager and reuse it on every deployment of this Worker."
       },
       "MUSE_NODE_ID": {
-        "description": "Enter the node ID of your authorized Muse device."
+        "description": "Initial setup. Enter the node ID of your authorized Muse device."
       },
       "MUSE_SDK_TOKEN": {
-        "description": "Enter the Gadget SDK token used when authorizing this device."
+        "description": "Initial setup. Enter the Gadget SDK token used when authorizing this device."
       },
       "MUSE_REFRESH_TOKEN": {
-        "description": "Enter the current refresh token for this device identity. Stop any executor sharing the identity before handoff."
+        "description": "Initial setup. Enter the current refresh token for this device identity. Stop any executor sharing the identity before handoff."
       }
     }
   }

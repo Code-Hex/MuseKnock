@@ -13,23 +13,32 @@ MuseKnock 通过 Cloudflare Workers 把 Webhook 通知发送到已有的 Muse �
 
 [快速开始](#快速开始) · [使用案例](docs/recipes/README.zh-CN.md)
 
+```mermaid
+flowchart LR
+    hooks["Slack · X · LINE · …"] -->|Webhook| inbox
+    subgraph worker["Cloudflare Worker"]
+        cron["Cron"] -->|"将新事件入队"| inbox["通知队列<br/>(Durable Object)"]
+    end
+    cron -->|"每 5 分钟读取"| feeds["Discord · Bluesky"]
+    admin["Muse MCP 连接器"] -.->|"设置目标对话"| inbox
+    inbox -->|"Muse Link"| chat["已有的 Muse 侧边对话"]
+```
+
 ## 快速开始
 
 请准备 Cloudflare 和 GitHub 账户、已获授权的 Muse 设备凭据，以及设备向现有对话发消息时使用的确切会话 ID。SDK 令牌仅供你在自己的 Muse 账户中用于个人、非商业用途。[首次授权设备](docs/operations.zh-CN.md#首次授权设备) · [SDK 令牌使用条款](https://gadgets.muse.ai/sdk-terms)
 
-**1. 从 Cloudflare 部署。** 点击上方的 **Deploy to Cloudflare**，选择 Worker 名称，在部署表单的 Worker 密钥栏填写以下七项。在密码管理器中为前三项分别生成足够长的随机字母数字串。[Cloudflare 部署按钮说明](https://developers.cloudflare.com/workers/platform/deploy-buttons/#worker-environment-variables-and-secrets)
+**1. 从 Cloudflare 部署。** 点击 **Deploy to Cloudflare**，选择 Worker 名称，填写以下五项密钥。在密码管理器中分别生成管理令牌和加密密钥。 [Cloudflare 部署按钮说明](https://developers.cloudflare.com/workers/platform/deploy-buttons/#worker-environment-variables-and-secrets)
 
-| Worker 密钥 | 值 |
-| --- | --- |
-| `HOOK_TOKEN` | Webhook 发送端使用的令牌 |
-| `MCP_TOKEN` | Muse 只读连接器使用的令牌 |
-| `MCP_ADMIN_TOKEN` | Muse 管理连接器使用的令牌，可配置目标对话和发送测试通知 |
-| `CREDENTIAL_ENCRYPTION_KEY` | 用于加密凭据的独立 32 字节密钥。在密码管理器中随机生成 64 个十六进制字符（0–9、a–f），并妥善备份。 |
-| `MUSE_NODE_ID` | 官方 `pairing.json` 中的 `node_id`，或社区版 `state.json` 中的 `device.device_id` |
-| `MUSE_REFRESH_TOKEN` | 官方文件中的 `refresh_token`，或社区版文件中的 `device.refresh_token` |
-| `MUSE_SDK_TOKEN` | 官方设备配对时使用的 SDK 令牌，或社区版文件中的 `sdk_token` |
+| Worker 密钥 | 值 | 使用时间 |
+| --- | --- | --- |
+| `MCP_ADMIN_TOKEN` | 用于 Muse 管理连接器的长随机令牌 | 长期保留 |
+| `CREDENTIAL_ENCRYPTION_KEY` | 用于加密凭据的独立 32 字节密钥。在密码管理器中随机生成 64 个十六进制字符（0–9、a–f），并妥善备份。 | 长期保留 |
+| `MUSE_NODE_ID` | 官方 `pairing.json` 中的 `node_id`，或社区版 `state.json` 中的 `device.device_id` | 首次设置 |
+| `MUSE_REFRESH_TOKEN` | 官方文件中的 `refresh_token`，或社区版文件中的 `device.refresh_token` | 首次设置 |
+| `MUSE_SDK_TOKEN` | 官方设备配对时使用的 SDK 令牌，或社区版文件中的 `sdk_token` | 首次设置 |
 
-升级现有 Worker 时，请先添加该密钥，再部署更新并通过 Muse 检查配置。[迁移已保存的凭据](docs/operations.zh-CN.md#迁移已保存的凭据)
+如果你测试过早期开发版，请使用新名称部署 Worker，以获得独立的空存储，并使用仅供新 Worker 使用的有效设备凭据。重新注册目标对话，再将连接器和事件来源指向新 URL。开发版的队列、规则和凭据不会自动迁移。
 
 如果已有执行器或 SDK 守护进程使用相同的设备身份，请先将其停止并关闭自动重启。移交后 Worker 会刷新设备凭据。只将表中指定的三项设备信息复制到 Cloudflare，原始文件和账户凭据应保留在你自己手中。部署 Worker，复制部署完成后显示的 HTTPS 地址。
 
@@ -38,31 +47,33 @@ MuseKnock 通过 Cloudflare Workers 把 Webhook 通知发送到已有的 Muse �
 **3. 通过 Muse 注册对话并测试投递。** 可以按顺序向连接器提出以下请求。
 
 1. “检查我的 MuseKnock 配置。” `get_setup_status` 检查 Worker 中的配置。下面的测试消息用于验证实际投递。
-2. “将现有会话 `已有会话ID` 注册为‘构建通知’，并设为通知目标。”请使用设备原来的 `--session-id`，或旧部署中的 `MUSE_SESSION_ID`。`register_side_chat` 保存的是 MuseKnock 中的名称。使用陌生的 ID，首次投递时可能会创建新对话。[Gadget SDK 侧边对话说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
+2. “将现有会话 `已有会话ID` 注册为‘构建通知’，并设为通知目标。”请使用设备原来的 `--session-id`。`register_side_chat` 保存的是 MuseKnock 中的名称。MuseKnock 会先向所选 Muse VM 确认会话存在，再保存或切换目标。[Gadget SDK 侧边对话说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “发送一条测试通知并检查回执。”Muse 使用新的 UUID 作为 `requestId` 调用 `send_test_notification`，然后用返回的回执 ID 调用 `get_delivery_status`。当状态为 `sent` 时，打开所选对话查看消息。重试同一次测试时，请使用相同的请求 ID。
+
+测试回执显示 `sent` 后，可以在 Cloudflare 中一次删除这三项首次设置用的 Muse 密钥，并部署更改。请保留 `MCP_ADMIN_TOKEN` 和原来的 `CREDENTIAL_ENCRYPTION_KEY`。Worker 会从加密存储中读取配对信息和最新的刷新令牌。再次调用 `get_setup_status`，确认 `ready` 为 true。
 
 **4. 连接事件来源。** 如需接入 Slack、LINE、Twilio、Telegram、企业微信、GitHub 或 X，请参阅[直接连接服务](#直接连接服务)。Bluesky 和 Discord 的设置见[连接 Bluesky](#连接-bluesky)和[连接 Discord](#连接-discord)。支持自定义 Bearer 请求头的服务可以使用下面的通用 Webhook。
 
-在发送服务的 Webhook 设置中，将请求设为发往同一 Worker 的 `/hooks/custom` 的 `POST`，添加 `Authorization: Bearer YOUR_HOOK_TOKEN` 和 `Content-Type: application/json`。发送 `{"message":"构建完成"}` 等正文后会收到回执 ID。之后可以在 Muse 中查看投递状态、暂停来源或筛选事件类型。
+如需使用通用 Webhook，请先在 Worker 的 Secret 中添加独立的随机令牌 `HOOK_TOKEN`。如需只读 MCP 连接器，再添加 `MCP_TOKEN`。每种用途应使用不同的令牌。
 
-如果发送端之前使用 `/hooks/default`，请将 URL 更新为 `/hooks/custom`。
+在发送服务的 Webhook 设置中，将请求设为发往同一 Worker 的 `/v1/hooks/custom` 的 `POST`，添加 `Authorization: Bearer YOUR_HOOK_TOKEN` 和 `Content-Type: application/json`。发送 `{"message":"构建完成"}` 等正文后会收到回执 ID。之后可以在 Muse 中查看投递状态、暂停来源或筛选事件类型。
 
 ## 直接连接服务
 
-在 Cloudflare 中打开 Worker，进入 **Settings → Variables and Secrets**，按需将下表中的值添加为 Secret 并部署更改。将相应路径附加到 Worker 的公开 HTTPS 地址，得到要注册的完整 URL。各服务使用自身的认证机制，`HOOK_TOKEN` 仅供 `/hooks/custom` 使用。
+在 Cloudflare 中打开 Worker，进入 **Settings → Variables and Secrets**，按需将下表中的值添加为 Secret 并部署更改。将相应路径附加到 Worker 的公开 HTTPS 地址，得到要注册的完整 URL。各服务使用自身的认证机制，`HOOK_TOKEN` 仅供 `/v1/hooks/custom` 使用。
 
 | 服务 | Worker Secret | 注册 URL 并验证投递 |
 | --- | --- | --- |
-| Slack Events API | 将 **Basic Information → App Credentials** 中的 Signing Secret 保存为 `SLACK_SIGNING_SECRET` | 启用 **Event Subscriptions**，将 `/hooks/slack` 注册为 Request URL。显示 **Verified** 后，订阅 `app_mention` 等机器人事件，授权所需权限并安装或重新安装应用。将机器人邀请到频道并 @ 它。[Slack URL 设置](https://docs.slack.dev/apis/events-api/using-http-request-urls/) |
-| LINE Messaging API | 将频道 **Basic settings** 中的 Channel secret 保存为 `LINE_CHANNEL_SECRET` | 在 **Messaging API** 中将 Webhook URL 设为 `/hooks/line`，点击 **Verify**，启用 **Use webhook**，并按需开启 **Webhook redelivery** 以便在接收失败时重试，然后向官方账号发送消息。验证请求带有签名和空事件列表，不会生成通知。[LINE 连接验证](https://developers.line.biz/en/docs/messaging-api/verify-webhook-url/) |
-| Twilio 入站短信和彩信 | 将号码所属账号的 Primary Auth Token 保存为 `TWILIO_AUTH_TOKEN` | 在 **Active Numbers** 中打开该号码的消息设置。在 **A message comes in → Webhook → HTTP POST** 中准确填写以 `/hooks/twilio` 结尾的公开 URL 并保存。向号码发送短信进行验证。Worker 返回空的 TwiML，不会自动回复短信。[Twilio 入站 Webhook](https://www.twilio.com/docs/messaging/guides/webhook-request) |
-| 企业微信自建应用 | 将 **我的企业** 中的企业 ID 保存为 `WECOM_CORP_ID`，将回调的 Token、EncodingAESKey 分别保存为 `WECOM_TOKEN`、`WECOM_ENCODING_AES_KEY` | 在 **应用管理 → 自建 → 接收消息 → 设置 API 接收** 中填入 `/hooks/wecom` 和相同的 Token、EncodingAESKey。如果后台要求主体相关的备案域名，请为 Worker 配置相应的自定义域名。保存时会自动验证加密回调 URL，然后给应用发送消息。[企业微信回调配置](https://developer.work.weixin.qq.com/document/path/90930) |
+| Slack Events API | 将 **Basic Information → App Credentials** 中的 Signing Secret 保存为 `SLACK_SIGNING_SECRET` | 启用 **Event Subscriptions**，将 `/v1/hooks/slack` 注册为 Request URL。显示 **Verified** 后，订阅 `app_mention` 等机器人事件，授权所需权限并安装或重新安装应用。将机器人邀请到频道并 @ 它。长消息会以摘录形式投递，并保留事件中提供的频道和消息时间戳。订阅对应频道的消息事件后，Worker 收到删除通知就会清除待投递的原文。消息表情回应会保留目标频道和消息时间戳。 [Slack URL 设置](https://docs.slack.dev/apis/events-api/using-http-request-urls/) |
+| LINE Messaging API | 将频道 **Basic settings** 中的 Channel secret 保存为 `LINE_CHANNEL_SECRET` | 在 **Messaging API** 中将 Webhook URL 设为 `/v1/hooks/line`，点击 **Verify**，启用 **Use webhook**，并按需开启 **Webhook redelivery** 以便在接收失败时重试，然后向官方账号发送消息。验证请求带有签名和空事件列表，不会生成通知。如果 LINE 在投递开始前撤回消息，Worker 会清除队列中的正文。撤回记录保留七天，即使撤回事件先于原消息到达也能生效。 [LINE 连接验证](https://developers.line.biz/en/docs/messaging-api/verify-webhook-url/) |
+| Twilio 入站短信和彩信 | 将号码所属账号的 Primary Auth Token 保存为 `TWILIO_AUTH_TOKEN` | 在 **Active Numbers** 中打开该号码的消息设置。在 **A message comes in → Webhook → HTTP POST** 中准确填写以 `/v1/hooks/twilio` 结尾的公开 URL 并保存。向号码发送短信进行验证。Worker 返回空的 TwiML，不会自动回复短信。[Twilio 入站 Webhook](https://www.twilio.com/docs/messaging/guides/webhook-request) |
+| 企业微信自建应用 | 将 **我的企业** 中的企业 ID 保存为 `WECOM_CORP_ID`，将回调的 Token、EncodingAESKey 分别保存为 `WECOM_TOKEN`、`WECOM_ENCODING_AES_KEY` | 在 **应用管理 → 自建 → 接收消息 → 设置 API 接收** 中填入 `/v1/hooks/wecom` 和相同的 Token、EncodingAESKey。如果后台要求主体相关的备案域名，请为 Worker 配置相应的自定义域名。保存时会自动验证加密回调 URL，然后给应用发送消息。[企业微信回调配置](https://developer.work.weixin.qq.com/document/path/90930) |
 
 **Telegram Bot API**。通过 @BotFather 创建机器人，另行生成由字母、数字、下划线或连字符组成的随机值（1 至 256 个字符），并将其保存为 Cloudflare 的 `TELEGRAM_WEBHOOK_SECRET`。使用 HTTPS 客户端按下例调用 `setWebhook`。在 shell 示例中，`BOT_TOKEN` 是 BotFather 提供的令牌，`WORKER_URL` 是末尾不带斜杠的 Worker 地址。机器人令牌仅用于访问 Telegram API。注册后会替换该机器人现有的 Webhook URL。[Telegram Webhook 设置](https://core.telegram.org/bots/api#setwebhook)
 
 ```sh
 curl --fail-with-body -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
-  --data-urlencode "url=${WORKER_URL}/hooks/telegram" \
+  --data-urlencode "url=${WORKER_URL}/v1/hooks/telegram" \
   --data-urlencode "secret_token=${TELEGRAM_WEBHOOK_SECRET}" \
   --data-urlencode 'allowed_updates=["message","edited_message","channel_post","edited_channel_post"]'
 curl --fail-with-body "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
@@ -72,7 +83,7 @@ curl --fail-with-body "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
 
 ### GitHub 仓库事件
 
-1. 生成随机密钥，保存到 Worker 的 `GITHUB_WEBHOOK_SECRET`。在目标仓库打开 **Settings → Webhooks → Add webhook**，将 Payload URL 设为 `https://YOUR-WORKER/hooks/github`，Content type 选 `application/json`，在 Secret 中填入相同密钥，并启用 SSL 验证。
+1. 生成随机密钥，保存到 Worker 的 `GITHUB_WEBHOOK_SECRET`。在目标仓库打开 **Settings → Webhooks → Add webhook**，将 Payload URL 设为 `https://YOUR-WORKER/v1/hooks/github`，Content type 选 `application/json`，在 Secret 中填入相同密钥，并启用 SSL 验证。
 2. 在 **Let me select individual events** 中按需选择 `push`、`issues`、`pull_request`、`release` 和 `workflow_run`，然后启用 Webhook。Worker 验证 GitHub 的 SHA-256 签名。首次 `ping` 仅用于确认连接，触发所选事件后即可在对话中看到摘要。[创建仓库 Webhook](https://docs.github.com/zh/webhooks/using-webhooks/creating-webhooks)
 3. 如果通知未送达，请检查 **Recent Deliveries**。GitHub 不会自动重试失败的投递。Worker 每次最多接收 512 KiB，每个来源每分钟最多接收 10 个新事件。遇到 `429` 时，等待一分钟后点击 **Redeliver**。七天内重复投递相同正文只会产生一条通知。[处理失败的投递](https://docs.github.com/zh/webhooks/testing-and-troubleshooting-webhooks/handling-failed-webhook-deliveries)
 
@@ -84,10 +95,10 @@ curl --fail-with-body "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
 
 使用应用级 Bearer Token 调用以下两个 X API。请求头使用 `Authorization: Bearer YOUR_APP_BEARER_TOKEN` 和 `Content-Type: application/json`。
 
-1. 向 `POST https://api.x.com/2/webhooks` 发送 `{"url":"https://YOUR-WORKER/hooks/x"}`。X 验证 URL 后，从响应中复制 Webhook ID。[注册 Webhook](https://docs.x.com/x-api/webhooks/quickstart)
+1. 向 `POST https://api.x.com/2/webhooks` 发送 `{"url":"https://YOUR-WORKER/v1/hooks/x"}`。X 验证 URL 后，从响应中复制 Webhook ID。[注册 Webhook](https://docs.x.com/x-api/webhooks/quickstart)
 2. 向 `POST https://api.x.com/2/activity/subscriptions` 发送 `{"event_type":"post.create","filter":{"user_id":"NUMERIC_X_USER_ID"},"webhook_id":"WEBHOOK_ID"}`。如需接收删除通知，再用 `post.delete` 创建一条订阅。[订阅事件](https://docs.x.com/x-api/activity/quickstart)
 
-在订阅的公开账号发布帖子，确认消息已送达侧边对话。对于新帖子，MuseKnock 转发帖子 ID、URL 和正文的前 4,000 个字符。MCP 的筛选类型为 `post_create` 和 `post_delete`。七天内重复投递同一 X 事件 ID 只会产生一条通知。
+在订阅的公开账号发布帖子，确认消息已送达侧边对话。对于新帖子，MuseKnock 转发帖子 ID、URL 和正文的前 4,000 个字符。MCP 的筛选类型为 `post_create` 和 `post_delete`。七天内重复投递同一 X 事件 ID 只会产生一条通知。Worker 收到删除事件时会丢弃仍在排队的原帖正文。如果删除事件先到，Worker 会保留该记录七天，以阻止之后到达的原帖进入投递流程。
 
 ## 连接 Bluesky
 
@@ -108,8 +119,23 @@ Worker 每五分钟检查一个 Discord 服务器文字频道。首次检查仅�
 2. 在 **Installation → Guild Install** 中选择 `bot` 权限范围，通过安装链接将机器人添加到服务器。在目标频道为机器人授予 **查看频道** 和 **读取消息历史记录** 权限。成员在该频道发布的消息将转发到所选 Muse 对话。[安装 Discord 应用](https://docs.discord.com/developers/resources/application#installation-context) · [频道消息权限](https://docs.discord.com/developers/resources/message#get-channel-messages)
 3. 在 Discord 的 **用户设置 → 高级 → 开发者模式** 中启用开发者模式。右键点击目标频道并选择 **复制频道 ID**，将该值保存为 Worker 的 `DISCORD_CHANNEL_ID` 并部署。首次定时检查完成后，在频道中发送一条消息，下一次检查后打开 Muse 确认投递。MCP 的来源名称为 `discord`，事件类型为 `message`。切换频道后，Worker 会从新频道的最新消息开始。
 
+## 可选的投递熔断器
+
+要限制所有 Webhook、轮询和 MCP 测试消息的发送尝试总数，在 Worker 设置中添加 **Text 类型**的变量 `CIRCUIT_BREAKER`。
+
+```json
+{"enabled":true,"maxAttempts":100,"maxAttemptsPerSource":50,"suppressReturns":true}
+```
+
+- `maxAttemptsPerSource` 限制每个来源在两次人工恢复之间的发送尝试次数。默认值为 `maxAttempts` 的一半，向下取整，最少为 1 次。在上例中，Discord 开始第 50 次尝试后，Worker 会停止投递排队中和新到达的 Discord 通知。其他来源仍可使用剩余的全局额度。要给其他来源留下额度，请设置小于全局上限的正整数。两个上限相等时，单个来源就能用尽全局额度。
+- `maxAttempts` 限制所有来源的尝试总数，默认为 100 次。每次尝试（包括重试）都会消耗一次来源额度和一次全局额度。最后一次全局尝试开始时，Worker 会停止投递所有来源排队中和新到达的通知。两项上限的修改都在下次恢复时生效。
+- 启用 `suppressReturns`（默认）时，中继可以通过 `/v1/hooks/custom` 的 `X-MuseKnock-Parent` 请求头传回原始回执 ID。识别出的回传不会消耗额度。没有该请求头的来源仍受总额度限制。
+- 省略此变量或设置 `{"enabled":false}` 即可卸载中间件。重新启用时沿用已保存的额度。配置无效时，Worker 暂停投递和轮询，保留队列中的通知，并对新通知返回 HTTP 503。修正配置后恢复投递。通过只读 MCP 工具 `get_delivery_breaker` 可查看剩余的全局额度（`remaining`）以及各来源已使用的次数（`sourceAttempts`）。
+
+任一额度用尽后，先修复循环来源，再用独立的运维 MCP 客户端连接 `/mcp`。为该连接配置单独的 Worker Secret `MCP_RECOVERY_TOKEN`，请勿将它交给 Muse。通过 `get_delivery_breaker` 读取当前代次，然后以此数值作为 `expectedGeneration` 调用 `rearm_delivery_breaker`。待正在发送的请求结束后，恢复操作会重置全局额度和所有来源的额度。已抑制的通知不会重发。
+
 ## 切换目标对话
 
-告诉管理连接器另一个名称和会话 ID，注册后再说“将通知切换到这个对话”。如果尚未选择目标，首次注册的对话会自动成为默认目标。切换只影响接下来收到的通知。排队或重试中的通知仍按接收时确定的目标投递。已有部署如果配置了 `MUSE_SESSION_ID`，原对话会以 `default` 作为注册名。
+告诉管理连接器另一个名称和会话 ID，注册后再说“将通知切换到这个对话”。如果尚未选择目标，首次注册的对话会自动成为默认目标。切换只影响接下来收到的通知。排队或重试中的通知仍按接收时确定的目标投递。
 
 使用 `MCP_TOKEN` 的只读连接器可以列出已注册的对话、查看回执。管理连接器还可以暂停来源或设置事件类型过滤条件。可选的 CLI 安装方式、Webhook 格式及投递排查方法见[运维指南](docs/operations.zh-CN.md)。

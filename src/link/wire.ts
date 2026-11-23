@@ -81,6 +81,11 @@ export function bodyEnvelope(stream: number, data: Uint8Array, ended = false) {
   return envelope(stream, 4, body.finish())
 }
 
+export function cancelEnvelope(stream: number) {
+  const cancelled = 1
+  return envelope(stream, 5, new BinaryWriter().tag(1, WireType.Varint).int32(cancelled).finish())
+}
+
 export function* fragments(payload: Uint8Array) {
   const id = crypto.getRandomValues(new Uint32Array(1))[0]
   const count = Math.ceil(payload.length / chunkBytes)
@@ -130,7 +135,7 @@ export class ResponseFrames {
 
     const frame = fields(fields(payload).data(1))
     const stream = Number(frame.integer(1))
-    if (frame.has(5)) throw new Error('Link stream reset')
+    if (frame.has(5)) return { stream, reset: true as const }
     if (frame.has(3)) {
       const response = fields(frame.data(3))
       return {

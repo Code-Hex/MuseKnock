@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { test, type TestContext } from 'node:test'
-import { getMuseVm, type DeviceCredentials } from '../src/muse-account.ts'
+import type { MuseDevice } from '../src/muse-device.ts'
+import { getMuseVms } from '../src/muse-account.ts'
 
 const device = {
   nodeId: 'homelink-abc123',
@@ -17,9 +18,9 @@ const preferred = {
   default: true,
 }
 const current = {
+  ...device,
   refreshToken: 'hatch_refresh:rotated',
-  accessToken: 'current',
-  savedAt: Date.now(),
+  access: { token: 'current', savedAt: Date.now() },
 }
 
 async function endpoint(
@@ -41,7 +42,7 @@ async function endpoint(
 
 test('rotates the device secret before VM lookup and selects the default leased VM', async (t) => {
   const paths: string[] = []
-  let saved: DeviceCredentials | undefined
+  let saved: MuseDevice | undefined
   const http = await endpoint(t, async (req, res) => {
     paths.push(req.url!)
     if (req.method === 'POST') {
@@ -57,7 +58,7 @@ test('rotates the device secret before VM lookup and selects the default leased 
       res.end(JSON.stringify({ vm_list: [null, first, preferred] }))
     }
   })
-  const vm = await getMuseVm(
+  const vms = await getMuseVms(
     device,
     undefined,
     async (next) => {
@@ -66,7 +67,10 @@ test('rotates the device secret before VM lookup and selects the default leased 
     http,
   )
   assert.deepEqual(paths, ['/device_token/refresh', '/fetch_vms'])
-  assert.deepEqual(vm, { noiseHost: 'hatch.metaaivm.com', vmId: 'second', vmToken: 'vm-token-2' })
+  assert.deepEqual(vms, [
+    { noiseHost: 'hatch.metaaivm.com', vmId: 'second', vmToken: 'vm-token-2' },
+    { noiseHost: 'hatch.metaaivm.com', vmId: 'first', vmToken: 'vm-token-1' },
+  ])
 })
 
 test('a requested VM must match exactly; a fresh access token needs no rotation', async (t) => {
@@ -76,12 +80,12 @@ test('a requested VM must match exactly; a fresh access token needs no rotation'
     res.end(JSON.stringify({ vm_list: [first, preferred] }))
   })
   const persist = async () => assert.fail('should use saved access token')
-  assert.equal(
-    (await getMuseVm({ ...device, vmId: 'first' }, current, persist, http)).vmId,
-    'first',
+  assert.deepEqual(
+    (await getMuseVms(current, 'first', persist, http)).map((vm) => vm.vmId),
+    ['first'],
   )
   await assert.rejects(
-    getMuseVm({ ...device, vmId: 'other' }, current, persist, http),
+    getMuseVms(current, 'other', persist, http),
     /requested VM/,
   )
 })
@@ -97,11 +101,11 @@ test('refreshes a rejected cached access token once, with the latest refresh sec
       res.writeHead(401).end('private diagnostic')
     }
   })
-  const persisted: DeviceCredentials[] = []
+  const persisted: MuseDevice[] = []
   await assert.rejects(
-    getMuseVm(
-      device,
+    getMuseVms(
       current,
+      undefined,
       async (next) => {
         persisted.push(next)
       },
@@ -121,7 +125,7 @@ test('keeps credentials out of errors and stops before lookup if persisting a ro
     res.end(JSON.stringify({ access_token: 'new-access', refresh_token: 'new-refresh' }))
   })
   await assert.rejects(
-    getMuseVm(
+    getMuseVms(
       device,
       undefined,
       async () => {
@@ -133,7 +137,7 @@ test('keeps credentials out of errors and stops before lookup if persisting a ro
   )
   assert.deepEqual(methods, ['POST'])
   await assert.rejects(
-    getMuseVm({ ...device, nodeId: 'other\r\nhost' }, undefined, async () => {}, http),
+    getMuseVms({ ...device, nodeId: 'other\r\nhost' }, undefined, async () => {}, http),
     /device/,
   )
   assert.deepEqual(methods, ['POST'])
@@ -151,7 +155,7 @@ test('an expired access token rotates before discovery, and a refused redirect n
     }
   })
   await assert.rejects(
-    getMuseVm(device, { ...current, savedAt: 0 }, async () => assert.fail(), http),
+    getMuseVms({ ...current, access: { ...current.access, savedAt: 0 } }, undefined, async () => assert.fail(), http),
   )
   assert.deepEqual(paths, ['/device_token/refresh'])
 })

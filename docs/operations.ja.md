@@ -11,36 +11,42 @@ Worker 専用の端末 ID を1つ用意してください。自分の SDK トー
 
 コミュニティ版を使った場合は、自分専用の Codespace のエディターで `muse-auth/.state/state.json` を開き、`sdk_token`、`device.device_id`、`device.refresh_token` の3項目だけを Cloudflare のデプロイ画面の対応するシークレット欄に転記します。ファイル本体とアカウントのセッション情報は Codespace 内に留めます。端末情報を引き渡したら Codespace は削除できます。[デプロイの手順](../README.ja.md#クイックスタート)
 
+初回デプロイで必要な Worker シークレットは5つです。`MCP_ADMIN_TOKEN` にはランダムな管理用トークン、`CREDENTIAL_ENCRYPTION_KEY` には別に生成した32バイトの乱数（16進数64桁）を設定します。端末情報は `MUSE_NODE_ID`、`MUSE_SDK_TOKEN`、`MUSE_REFRESH_TOKEN` の3つをまとめて Cloudflare に入力します。管理用コネクタの設定には Worker の `/mcp` URL と既存のサイドチャットのセッション ID も使います。
+
+管理用コネクタでサイドチャットを登録し、テスト通知がそのチャットに届いたことを確認します。その後、1回のデプロイで端末のシークレット3つをまとめて削除できます。`MCP_ADMIN_TOKEN` と元の `CREDENTIAL_ENCRYPTION_KEY` は残してください。次回起動時は Durable Object に保存した暗号化済みのペアリングを使います。端末の3項目を一部だけ残すと、3項目をそろえるかすべて削除するまで配信が停止します。
+
+`/v1/hooks/custom` を使うショートカットや自動化には、専用のランダムな Worker シークレット `HOOK_TOKEN` を追加します。閲覧専用 MCP コネクタを使う場合は、別のランダムな値を `MCP_TOKEN` に設定します。
+
 ## 届かない通知を調べる
 
 Muse に「受付 ID … の配信状態を調べて」と頼みます。コネクタを設定する前でも、元と同じ `Idempotency-Key` で Webhook を再送すれば状態を確認できます。
 
 | 状態 | 意味と確認先 |
 | --- | --- |
-| `queued` | Worker の配信待ちです。Muse の Secrets、端末認証の有効性、端末に貸与済みの VM があることを確認してください。 |
+| `queued` | Worker の配信待ちです。保存済みのペアリング、端末認証の有効性、端末に貸与済みの VM を確認してください。 |
 | `sending` | Worker がイベントの配信を開始し、接続または投稿中です。 |
 | `sent` | Muse が投稿に受付応答を返しました。Worker が通知を受け付けた時点の投稿先を開いてください。 |
-| `suppressed` | 停止中、または許可した種別の対象外です。この通知の配信は終了しました。 |
+| `suppressed` | 通知元のルール、メッセージの取り消し、ブレーカーなどで配信を抑止しました。`message_retracted` は配信前に Slack または X の投稿が削除されたか、LINE のメッセージが取り消されたことを示します。受付情報の `reason` が `source_open` ならその通知元が上限に達し、`circuit_open` なら全体の上限に達しています。 Worker は投稿直前にチャットの存在を確認します。`side_chat_missing` は Muse が 404 を返したことを示します。新着通知を再開するには、MCP で既存のチャットを選択してください。抑止済みの通知は再送されません。 |
 | `expired` | 受付から1時間が経ち、配信待ちの期限が切れました。 |
 | `unknown` | 送信後に結果を確認できなかったか、配信許可が2分で期限切れになりました。新しい通知を送る前にサイドチャットを確認してください。 |
 
-投稿前と確定できた失敗は、配信上限と有効期限の範囲で再試行します。すでに Muse に届いた可能性があれば `unknown` として保留します。受付応答が失われた際の二重投稿を防ぐためです。[Gadget SDK の投稿経路](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/link_client.py)
+投稿前に失敗した通知が再試行を待つ間も、ほかのチャットには配信できます。すでに Muse に届いた可能性があれば `unknown` として保留します。受付応答が失われた際の二重投稿を防ぐためです。[Gadget SDK の投稿経路](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/link_client.py)
 
-## 保存済みの認証情報を移行する
+通知の宛先は、受付時のペアリング・VM・セッション ID で決まります。ペアリングや VM の設定変更で配信が保留された場合は、期限内に元の設定へ戻すと配信を再開します。新しくペアリングしたら MCP から宛先を登録してください。
 
-1. 既存の Worker を更新する前に、Cloudflare の **Settings → Variables and Secrets** で `CREDENTIAL_ENCRYPTION_KEY` を **Secret** として追加します。[デプロイ手順](../README.ja.md#クイックスタート)に従って生成した16進数64文字の専用鍵を使います。この Worker にすでに設定してある場合は同じ値を使い続けます。新規のローカルセットアップでは別の鍵が生成されるため、既存の Worker を `npm run deploy:local` で更新する場合は、先にその Worker の鍵を `.dev.vars` に復元してください。
-2. 更新版をデプロイし、認証済みの Muse コネクタから `get_setup_status` を呼び、`credentialStorageReady` が `true` であることを確認します。`false` の場合はシークレットの設定を確認し、鍵が変わっていれば控えから元の値を復元します。Durable Object の起動時に、保存済みの Muse の端末トークンと Bluesky のセッションが AES-256-GCM で暗号化されます。以後のトークン更新時にも暗号化されます。コピーされた認証レコードの復号には、Worker Secret に保存した鍵が必要です。再デプロイや復元に備えて鍵はパスワードマネージャーに保管してください。誤って別の鍵に置き換えたときは、元の値に戻すと保存済みトークンを再び読み取れます。
-3. 移行前のエクスポートやポイントインタイムリカバリの復元履歴には、平文のトークンが残る可能性があります。それらが漏えいした場合、該当する Muse 端末の認証を失効させ、新たに端末を認証してください。Bluesky のトークンが漏えいした場合は、該当するセッションとアプリパスワードを失効させ、アプリパスワードを再発行します。対応する Worker Secret を更新してから配信を再開します。[Cloudflare のストレージ復元機能](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#point-in-time-recovery-api)
+## 認証情報の暗号鍵を復元する
+
+Worker は Muse の端末トークンと Bluesky のセッションを AES-256-GCM で暗号化して保存します。`CREDENTIAL_ENCRYPTION_KEY` をパスワードマネージャーに控え、同じ Worker を再デプロイするときは元の鍵を使ってください。`get_setup_status` で `credentialStorageReady` が `false` の場合は、Worker のシークレットを確認し、控えておいた鍵を復元してください。元の鍵を紛失した場合、その鍵で暗号化した情報は復号できません。新しいストレージを使う Worker をデプロイし、新しく認証した端末情報で初回設定を行ってください。
 
 ## 端末認証を更新する
 
-移行後は Worker が更新した端末認証情報を Durable Object に保存します。この ID は他の executor、ローカル開発環境、別の Worker と共有しないでください。Muse がペアリングを失効させた場合は、改めて端末を認証し、Cloudflare の Worker シークレットに最新値を設定してデプロイします。投稿先の登録は Durable Object に残ります。
+Muse がペアリングを失効させたら、専用の端末を再認証し、新しい端末情報3つをまとめて設定してデプロイします。新しいペアリングで投稿先を登録し、テスト通知が届いたら3項目をまとめて削除できます。Durable Object を新設した場合も初回設定が必要です。同じ端末 ID を使う Worker や SDK デーモンは同時に動かさないでください。
 
-Worker は標準の端末 API `api.muse.ai` と暗号化された Link ゲートウェイ `hatch.metaaivm.com` を使用します。`MUSE_VM_ID` を指定した場合は、その VM が端末に貸与されていることを確認してください。指定がなければ既定の貸与済み VM を選び、既定がなければ一覧の先頭を使います。[Gadget SDK の端末 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
+Worker は標準の端末 API `api.muse.ai` と暗号化された Link ゲートウェイ `hatch.metaaivm.com` を使用します。`MUSE_VM_ID` を指定した場合は、その VM が端末に貸与されていることを確認してください。指定がなければ、登録時に既定の VM を選び、既定がなければ一覧の先頭を使います。登録済みの名前を選び直すと、登録時の VM でチャットを確認します。現在の既定 VM に移すには、同じ名前とセッション ID で `register_side_chat` を呼び出してください。[Gadget SDK の端末 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 
 ## Webhook の送信仕様
 
-標準の送信先は `POST /hooks/custom` です。`HOOK_TOKEN` で Bearer 認証します。 MCP 上の送信元名は `default` です。既存の一時停止設定やフィルターも引き継がれます。
+`POST /v1/hooks/custom` に `HOOK_TOKEN` を Bearer トークンとして送ります。MCP で一時停止やフィルターを設定するときの送信元名は `custom` です。
 
 | 入力 | 処理 |
 | --- | --- |
@@ -75,7 +81,7 @@ registerWebhook(app, 'ci', [
 })
 ```
 
-再デプロイ後は `POST /hooks/ci` に通知できます。送信元独自の署名検証は、この配列のミドルウェアで変換前の `c.req.raw.clone()` を読みます。認証後に独自のレート制限やフィルターを追加できます。拠点共通の配信上限は Durable Object が適用します。[Hono ミドルウェア](https://hono.dev/docs/guides/middleware) · [Durable Object の SQLite](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
+再デプロイ後は `POST /v1/hooks/ci` に通知できます。送信元独自の署名検証は、この配列のミドルウェアで変換前の `c.req.raw.clone()` を読みます。認証後に独自のレート制限やフィルターを追加できます。拠点共通の配信上限は Durable Object が適用します。[Hono ミドルウェア](https://hono.dev/docs/guides/middleware) · [Durable Object の SQLite](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
 
 ## MCP ツール
 
@@ -88,10 +94,12 @@ registerWebhook(app, 'ci', [
 | `set_active_side_chat` | `name` で登録済みのチャットを選び、次の通知から適用します。 | 管理 |
 | `list_sources` | なし。受領履歴または配信ルールのある送信元を返します。 | 読み取り |
 | `get_delivery_status` | `id`（受付 ID）。本文は含みません。 | 読み取り |
+| `get_delivery_breaker` | 全体の残り枠と通知元別の試行数を返します。 | 読み取り |
+| `rearm_delivery_breaker` | `expectedGeneration`。いずれかの上限に達し、送信中の試行が終了した後で両方の枠をリセットします。 | 復旧 |
 | `set_source_paused` | `source`、`paused`（真偽値） | 管理 |
 | `set_event_filter` | `source`、`types`（許可する種別の配列）。空配列は全種別を許可します。 | 管理 |
 
-登録名は前後の空白を除いて1〜64文字で、大文字と小文字を区別します。先頭は Unicode の文字または数字、以降は文字・数字・結合文字・半角スペース・ピリオド・アンダースコア・ハイフンを使えます。セッション ID は大文字と小文字を区別し、1〜64文字の半角英数字とハイフンが使えます。登録処理は指定された ID を保存し、テスト投稿は行いません。既存のチャットを使うには、ガジェットが投稿に使ったセッション ID を指定してください。旧設定の有効な `MUSE_SESSION_ID` は `default` として引き継ぎます。端末のシークレットまたは投稿先が未設定のとき、認証済みの通知リクエストは HTTP `503` を返します。
+登録名は前後の空白を除いて1〜64文字で、大文字と小文字を区別します。先頭は Unicode の文字または数字、以降は文字・数字・結合文字・半角スペース・ピリオド・アンダースコア・ハイフンを使えます。セッション ID は大文字と小文字を区別し、1〜64文字の半角英数字とハイフンが使えます。登録・切替時は投稿せずに Muse に問い合わせ、指定したセッションの存在を確認します。既存のチャットを使うには、ガジェットが投稿に使ったセッション ID を指定してください。ペアリングを読み込めない場合や投稿先が未設定の場合、認証済みの通知リクエストは HTTP `503` を返します。
 
 Webhook や MCP のトークンを更新するときは、Cloudflare で該当する Worker シークレットを変更してデプロイします。その値を使う送信元やコネクタにも新しいトークンを設定してください。
 
@@ -101,4 +109,6 @@ Muse Gadget SDK のコミット `e17081a45941415d483642dbe21c2a2e6ef85a13` を�
 
 ## CLI でセットアップする場合
 
-Node.js 22.12 以降で `npm ci`、`npm run setup -- --pairing /path/to/pairing.json` を実行します。コミュニティ版は代わりに `--device-state /path/to/state.json` を使います。生成された `.dev.vars` で端末の認証情報を補います。新規の Worker では生成された `CREDENTIAL_ENCRYPTION_KEY` をパスワードマネージャーに保管します。既存の Worker をデプロイする場合は元の鍵を使ってください。新規設定では投稿先は未選択です。デプロイ後に MCP から登録してください。旧環境の `.env.bridge` を含め、既存の `MUSE_SESSION_ID` は引き継ぎます。`npx wrangler login` の後に `npm run deploy:local` を実行すると、この設定をアップロードできます。検証には `npm test`、`npm run check`、`npm run deploy -- --dry-run` を使います。`npm run dev` で実際に投稿するときは別の端末 ID を使用してください。実際の Muse アカウントへの投稿は未検証です。
+Node.js 22.12 以降で `npm ci`、`npm run setup -- --pairing /path/to/pairing.json` を実行します。コミュニティ版は代わりに `--device-state /path/to/state.json` を使います。生成された `.dev.vars` で端末の認証情報を補います。スクリプトはカスタム Webhook と閲覧専用 MCP のトークンも個別に生成します。新規の Worker では生成された `CREDENTIAL_ENCRYPTION_KEY` をパスワードマネージャーに保管します。既存の Worker をデプロイする場合は元の鍵を使ってください。`npx wrangler login` の後に `npm run deploy:local` を実行すると、この設定をアップロードできます。デプロイ後に MCP から投稿先を登録してください。検証には `npm test`、`npm run check`、`npm run deploy -- --dry-run` を使います。`npm run dev` で実際に投稿するときは別の端末 ID を使用してください。実際の Muse アカウントへの投稿は未検証です。
+
+Cloudflare で端末の3項目を削除した場合は、次回ローカルからデプロイする前に `.dev.vars` からもその3項目を削除してください。

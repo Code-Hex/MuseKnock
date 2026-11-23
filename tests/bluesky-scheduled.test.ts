@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Response } from 'miniflare'
-import { startWorker } from './worker.ts'
+import { startConfiguredWorker } from './worker.ts'
 import { connect } from './mcp-client.ts'
 
 const cron = '/cdn-cgi/local/scheduled?format=json'
 
 test('a scheduled run skips Bluesky when it is unconfigured', async (t) => {
   const calls: string[] = []
-  const worker = await startWorker((req) => {
+  const worker = await startConfiguredWorker((req) => {
     calls.push(req.url)
     return new Response(null, { status: 500 })
   })
@@ -33,7 +33,7 @@ test('the schedule establishes a baseline then queues a new public post in the p
       indexedAt: '2026-11-20T00:00:0' + n + '.000Z',
     },
   })
-  const worker = await startWorker(
+  const worker = await startConfiguredWorker(
     (req) => {
       const url = new URL(req.url)
       if (url.origin !== 'https://public.api.bsky.app') return new Response(null, { status: 503 })

@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { Response } from 'miniflare'
 import { connect } from './mcp-client.ts'
-import { startWorker } from './worker.ts'
+import { startConfiguredWorker, startWorker, waitForAssertion } from './worker.ts'
 
 function assertRecord(value: unknown): asserts value is Record<string, unknown> {
   assert.ok(value !== null && typeof value === 'object' && !Array.isArray(value))
 }
 
 test('MCP readers inspect delivery rules; only administrators can change them', async (t) => {
-  const worker = await startWorker()
+  const worker = await startConfiguredWorker()
   t.after(() => worker.close())
   const url = new URL('/mcp', worker.url)
   const reader = await connect(url, 'MCP_TOKEN-test')
@@ -16,12 +17,14 @@ test('MCP readers inspect delivery rules; only administrators can change them', 
   t.after(() => Promise.all([reader.close(), admin.close()]))
 
   assert.deepEqual((await reader.listTools()).tools.map((tool) => tool.name).sort(), [
+    'get_delivery_breaker',
     'get_delivery_status',
     'get_setup_status',
     'list_side_chats',
     'list_sources',
   ])
   assert.deepEqual((await admin.listTools()).tools.map((tool) => tool.name).sort(), [
+    'get_delivery_breaker',
     'get_delivery_status',
     'get_setup_status',
     'list_side_chats',
@@ -34,8 +37,12 @@ test('MCP readers inspect delivery rules; only administrators can change them', 
   ])
 
   assert.deepEqual((await reader.callTool({ name: 'list_side_chats' })).structuredContent, {
-    active: 'default',
-    chats: [{ name: 'default', sessionId: 'same-chat' }],
+    active: 'Notifications',
+    chats: [{ name: 'Notifications', sessionId: 'same-chat' }],
+  })
+
+  assert.deepEqual((await reader.callTool({ name: 'get_delivery_breaker' })).structuredContent, {
+    state: 'disabled',
   })
 
   const pause = { name: 'set_source_paused', arguments: { source: 'ci', paused: true } }
@@ -76,7 +83,7 @@ test('MCP readers inspect delivery rules; only administrators can change them', 
     true,
   )
 
-  const hook = await fetch(new URL('/hooks/custom', worker.url), {
+  const hook = await fetch(new URL('/v1/hooks/custom', worker.url), {
     method: 'POST',
     headers: { Authorization: 'Bearer HOOK_TOKEN-test', 'X-Event-Type': 'opened' },
     body: 'sensitive event body',
@@ -86,14 +93,14 @@ test('MCP readers inspect delivery rules; only administrators can change them', 
   const status = (
     await reader.callTool({
       name: 'get_delivery_status',
-      arguments: { id: receipt.id },
+      arguments: { id: receipt.id.toUpperCase() },
     })
   ).structuredContent
   assert.ok(status && typeof status === 'object' && 'createdAt' in status)
   assert.equal(typeof status.createdAt, 'number')
   assert.deepEqual(status, {
     id: receipt.id,
-    source: 'default',
+    source: 'custom',
     type: 'opened',
     state: 'queued',
     createdAt: status.createdAt,
@@ -106,8 +113,8 @@ test('MCP readers inspect delivery rules; only administrators can change them', 
   assert.equal(foreignOrigin.status, 403)
 })
 
-test('an admin registers and switches webhook destinations without a deployment session ID', async (t) => {
-  const worker = await startWorker(undefined, { MUSE_SESSION_ID: '' })
+test('first setup preserves an empty registry when Muse cannot verify a destination', async (t) => {
+  const worker = await startWorker()
   t.after(() => worker.close())
   const url = new URL('/mcp', worker.url)
   const reader = await connect(url, 'MCP_TOKEN-test')
@@ -121,7 +128,7 @@ test('an admin registers and switches webhook destinations without a deployment 
   })
   const select = (name: string) => ({ name: 'set_active_side_chat', arguments: { name } })
   const post = () =>
-    fetch(new URL('/hooks/custom', worker.url), {
+    fetch(new URL('/v1/hooks/custom', worker.url), {
       method: 'POST',
       headers: { Authorization: 'Bearer HOOK_TOKEN-test' },
       body: 'browser setup complete',
@@ -141,72 +148,16 @@ test('an admin registers and switches webhook destinations without a deployment 
   assert.match(JSON.stringify(missingDestination.content), /register.*side chat/i)
   assert.deepEqual((await list()).structuredContent, { active: null, chats: [] })
   assert.equal((await post()).status, 503)
-  const first = { name: 'Builds', sessionId: 'room-1' }
-  const second = { name: '本番通知', sessionId: 'room-2' }
-  const addFirst = register(first.name, first.sessionId)
+  const addFirst = register('Builds', 'room-1')
   assert.equal((await reader.callTool(addFirst)).isError, true)
   assert.equal((await admin.callTool(register('bad\nname', 'room-1'))).isError, true)
-  assert.equal(
-    (await admin.callTool(register('untrusted', 'https://invalid.example'))).isError,
-    true,
-  )
-  assert.deepEqual((await list()).structuredContent, { active: null, chats: [] })
-  for (let i = 0; i < 2; i++) {
-    assert.deepEqual((await admin.callTool(addFirst)).structuredContent, {
-      active: first.name,
-      chats: [first],
-    })
-  }
-  assert.deepEqual((await setup()).structuredContent, {
-    credentialStorageReady: true,
-    deviceConfigured: true,
-    active: first.name,
-    ready: true,
-  })
-  assert.equal((await reader.callTool(sendTest)).isError, true)
-  assert.equal(
-    (await admin.callTool({ name: 'send_test_notification', arguments: { requestId: 'invalid' } }))
-      .isError,
-    true,
-  )
-  const receipt = (await admin.callTool(sendTest)).structuredContent
-  assertRecord(receipt)
-  assert.equal(typeof receipt.id, 'string')
-  assert.deepEqual(receipt, { id: receipt.id, state: 'queued', duplicate: false })
-  assert.deepEqual((await admin.callTool(sendTest)).structuredContent, {
-    ...receipt,
-    duplicate: true,
-  })
-  const delivery = (
-    await reader.callTool({ name: 'get_delivery_status', arguments: { id: receipt.id } })
-  ).structuredContent
-  assertRecord(delivery)
-  assert.equal(delivery.source, 'museknock-test')
-  assert.equal(delivery.type, 'test')
-  assert.equal((await post()).status, 202)
-  const chats = [first, second]
-  assert.deepEqual(
-    (await admin.callTool(register(second.name, second.sessionId))).structuredContent,
-    {
-      active: first.name,
-      chats,
-    },
-  )
-  assert.equal((await reader.callTool(select(second.name))).isError, true)
+  assert.equal((await admin.callTool(register('untrusted', 'https://invalid.example'))).isError, true)
+  const unavailable = await admin.callTool(addFirst)
+  assert.equal(unavailable.isError, true)
+  assert.match(JSON.stringify(unavailable.content), /could not verify/i)
   assert.equal((await admin.callTool(select('missing'))).isError, true)
-  assert.deepEqual((await list()).structuredContent, { active: first.name, chats })
-  for (let i = 0; i < 2; i++) {
-    assert.deepEqual((await admin.callTool(select(second.name))).structuredContent, {
-      active: second.name,
-      chats,
-    })
-  }
-  const updated = { ...second, sessionId: 'room-3' }
-  await admin.callTool(register(updated.name, updated.sessionId))
-  assert.deepEqual((await list()).structuredContent, {
-    active: updated.name,
-    chats: [first, updated],
-  })
+  assert.deepEqual((await list()).structuredContent, { active: null, chats: [] })
+  assert.equal((await post()).status, 503)
 })
 
 test('MCP setup checks disclose no device secrets and never send an implicit test', async (t) => {
@@ -218,7 +169,7 @@ test('MCP setup checks disclose no device secrets and never send an implicit tes
   assert.deepEqual((await admin.callTool({ name: 'get_setup_status' })).structuredContent, {
     credentialStorageReady: true,
     deviceConfigured: false,
-    active: 'default',
+    active: null,
     ready: false,
   })
   const missingDevice = await admin.callTool({
@@ -233,7 +184,7 @@ test('MCP setup checks disclose no device secrets and never send an implicit tes
 })
 
 test('MCP test notifications respect the source pause and rate limits', async (t) => {
-  const worker = await startWorker()
+  const worker = await startConfiguredWorker()
   t.after(() => worker.close())
   const admin = await connect(new URL('/mcp', worker.url), 'MCP_ADMIN_TOKEN-test')
   t.after(() => admin.close())
@@ -259,7 +210,7 @@ test('MCP test notifications respect the source pause and rate limits', async (t
 test('a shared webhook or read-only credential cannot authorize MCP administration', async (t) => {
   for (const reused of ['HOOK_TOKEN', 'MCP_TOKEN']) {
     const token = reused + '-test'
-    const worker = await startWorker(undefined, { MCP_ADMIN_TOKEN: token })
+    const worker = await startConfiguredWorker(undefined, { MCP_ADMIN_TOKEN: token })
     t.after(() => worker.close())
     const response = await fetch(new URL('/mcp', worker.url), {
       method: 'POST',
@@ -272,7 +223,7 @@ test('a shared webhook or read-only credential cannot authorize MCP administrati
 test('credential storage must be available before accepting deliveries or refreshing tokens', async (t) => {
   const calls: string[] = []
   for (const key of ['', 'a'.repeat(64)]) {
-    const worker = await startWorker(
+    const worker = await startConfiguredWorker(
       (req) => {
         calls.push(req.url)
         throw new Error('Unexpected outbound request')
@@ -285,7 +236,7 @@ test('credential storage must be available before accepting deliveries or refres
     const status = (await admin.callTool({ name: 'get_setup_status' })).structuredContent
     assert.deepEqual(status, {
       deviceConfigured: true,
-      active: 'default',
+      active: 'Notifications',
       credentialStorageReady: false,
       ready: false,
     })
@@ -294,7 +245,7 @@ test('credential storage must be available before accepting deliveries or refres
       arguments: { requestId: crypto.randomUUID() },
     })
     assert.equal(test.isError, true)
-    const response = await fetch(new URL('/hooks/custom', worker.url), {
+    const response = await fetch(new URL('/v1/hooks/custom', worker.url), {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + 'A'.repeat(64) },
       body: 'test',
@@ -302,4 +253,95 @@ test('credential storage must be available before accepting deliveries or refres
     assert.equal(response.status, 503)
   }
   assert.deepEqual(calls, [])
+})
+
+test('only the recovery connector can rearm the shared breaker after a delivery attempt', async (t) => {
+  const worker = await startConfiguredWorker(
+    (req) => {
+      const path = new URL(req.url).pathname
+      if (path === '/device_token/refresh') {
+        return Response.json({ access_token: 'test-access', refresh_token: 'new-refresh' })
+      }
+      if (path === '/fetch_vms') {
+        return Response.json({
+          vm_list: [
+            { vm_id: 'local-vm', vm_auth_token: 'test-vm-token', vm_ws_url: 'wss://example.test' },
+          ],
+        })
+      }
+      return new Response(null, { status: 503 })
+    },
+    { CIRCUIT_BREAKER: '{"maxAttempts":1}', MCP_RECOVERY_TOKEN: 'operator-only' },
+  )
+  t.after(() => worker.close())
+  const url = new URL('/mcp', worker.url)
+  const reader = await connect(url, 'MCP_TOKEN-test')
+  const admin = await connect(url, 'MCP_ADMIN_TOKEN-test')
+  const operator = await connect(url, 'operator-only')
+  t.after(() => Promise.all([reader.close(), admin.close(), operator.close()]))
+  const list = async (client: typeof reader) =>
+    (await client.listTools()).tools.map((tool) => tool.name).sort()
+  assert.deepEqual(await list(operator), [...(await list(reader)), 'rearm_delivery_breaker'].sort())
+  const testPost = { name: 'send_test_notification', arguments: { requestId: crypto.randomUUID() } }
+  assert.equal((await operator.callTool(testPost)).isError, true)
+  const status = async () => {
+    const data = (await reader.callTool({ name: 'get_delivery_breaker' })).structuredContent
+    assertRecord(data)
+    return data
+  }
+  const reset = { name: 'rearm_delivery_breaker', arguments: { expectedGeneration: 1 } }
+  assert.equal((await status()).state, 'closed')
+  assert.equal((await operator.callTool(reset)).isError, true)
+  assert.equal(
+    (await operator.callTool({ ...reset, arguments: { expectedGeneration: 0 } })).isError,
+    true,
+  )
+  const receipt = (await admin.callTool(testPost)).structuredContent
+  assertRecord(receipt)
+  await waitForAssertion(async () => {
+    const delivery = await reader.callTool({
+      name: 'get_delivery_status',
+      arguments: { id: receipt.id },
+    })
+    assertRecord(delivery.structuredContent)
+    assert.equal(delivery.structuredContent.state, 'suppressed')
+  })
+  assert.equal((await status()).state, 'open')
+  for (const client of [reader, admin]) assert.equal((await client.callTool(reset)).isError, true)
+  assert.notEqual((await operator.callTool(reset)).isError, true)
+  const after = await status()
+  assert.equal(after.generation, 2)
+  assert.equal(after.remaining, 1)
+  assert.equal(after.state, 'closed')
+  assert.equal((await operator.callTool(reset)).isError, true)
+  assert.deepEqual(await status(), after)
+})
+
+test('a recovery credential shared with another bearer role disables bearer-protected routes', async (t) => {
+  for (const conflictingRole of ['HOOK_TOKEN', 'MCP_TOKEN', 'MCP_ADMIN_TOKEN']) {
+    const token = conflictingRole + '-test'
+    const worker = await startConfiguredWorker(undefined, { MCP_RECOVERY_TOKEN: token })
+    t.after(() => worker.close())
+    for (const path of ['/mcp', '/v1/hooks/custom']) {
+      const response = await fetch(new URL(path, worker.url), {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token },
+      })
+      assert.equal(response.status, 503)
+    }
+  }
+})
+
+test('initial setup needs only the admin role before an optional event source is enabled', async (t) => {
+  const worker = await startConfiguredWorker(undefined, { HOOK_TOKEN: '', MCP_TOKEN: '' })
+  t.after(() => worker.close())
+  const admin = await connect(new URL('/mcp', worker.url), 'MCP_ADMIN_TOKEN-test')
+  t.after(() => admin.close())
+  const status = await admin.callTool({ name: 'get_setup_status' })
+  assertRecord(status.structuredContent)
+  assert.equal(status.structuredContent.ready, true)
+  const custom = await fetch(new URL('/v1/hooks/custom', worker.url), {
+    method: 'POST', headers: { Authorization: 'Bearer MCP_ADMIN_TOKEN-test' }, body: 'event',
+  })
+  assert.equal(custom.status, 401)
 })

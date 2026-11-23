@@ -4,13 +4,15 @@
 
 たとえば、X でフォローしているプロジェクトの告知を Muse でも受け取れます。X アプリのプッシュ通知が届くと、iPhone が Worker に HTTPS リクエストを送ります。X の開発者登録は不要で、X Activity API のイベント料金も発生しません。[X のモバイル通知](https://help.x.com/en/managing-your-account/notifications-on-mobile-devices)・[X Activity API の料金](https://docs.x.com/x-api/activity/event-pricing)
 
+Worker のシークレットに専用のランダムな `HOOK_TOKEN` を設定してデプロイし、カスタム Webhook を有効にします。ショートカットにも同じ値を使用します。
+
 1. iOS 27 の iPhone で X の通知を許可します。フォローしているアカウントのプロフィールを開き、ベルから「すべてのポスト」を選びます。実際の投稿通知がどんな文面で届くか確認します。
 2. 「ショートカット」で新規ショートカットを作り、「編集」→「オートメーション」→「通知」で **X** を選びます。そのアカウントの通知だけを拾うには、実際に表示されたアカウント名などを使ってタイトルや本文を絞り込みます。オートメーションを有効にします。[Apple の通知トリガー仕様](https://support.apple.com/en-by/guide/shortcuts/apd932ff833f/10.0/ios/27)
 3. 「URLの内容を取得」を追加し、表のホスト名と `YOUR_HOOK_TOKEN` を自分の Worker の値に置き換えます。ショートカットを共有するときはトークンを取り除いてください。
 
 | 設定項目 | 値 |
 | --- | --- |
-| URL | `https://YOUR-WORKER/hooks/custom` |
+| URL | `https://YOUR-WORKER/v1/hooks/custom` |
 | 方法 | `POST` |
 | ヘッダー | `Authorization` = `Bearer YOUR_HOOK_TOKEN` |
 | 要求本文 | **JSON** · `message` = `指定した条件の X 通知が届きました。` |

@@ -1,7 +1,8 @@
-HOOK_TOKEN=
-MCP_TOKEN=
+# Keep these two secrets for the lifetime of the Worker.
 MCP_ADMIN_TOKEN=
 CREDENTIAL_ENCRYPTION_KEY=
+
+# Supply all three for the first deployment or to select another pairing.
 MUSE_NODE_ID=
 MUSE_SDK_TOKEN=
 MUSE_REFRESH_TOKEN=

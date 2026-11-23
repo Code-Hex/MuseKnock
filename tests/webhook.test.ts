@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { startWorker } from './worker.ts'
+import { startConfiguredWorker, startWorker } from './worker.ts'
 
 test('a webhook is authenticated, validated and deduplicated', async (t) => {
-  const worker = await startWorker()
+  const worker = await startConfiguredWorker()
   t.after(() => worker.close())
   const post = (path: string, token: string, body?: string, headers?: Record<string, string>) =>
     fetch(new URL(path, worker.url), {
@@ -11,7 +11,7 @@ test('a webhook is authenticated, validated and deduplicated', async (t) => {
       body,
       headers: { Authorization: 'Bearer ' + token, ...headers },
     })
-  const hook = '/hooks/custom'
+  const hook = '/v1/hooks/custom'
   const hookToken = 'HOOK_TOKEN-test'
   const body = '{"temperature":35, "sensor_id":9007199254740993}'
   const headers = {
@@ -20,11 +20,13 @@ test('a webhook is authenticated, validated and deduplicated', async (t) => {
     'Idempotency-Key': 'sensor-1',
   }
   assert.equal((await post(hook, 'wrong-role', body, headers)).status, 401)
+  assert.equal((await post('/hooks/custom', hookToken)).status, 404)
+  assert.equal((await post('/hooks/slack', hookToken)).status, 404)
   assert.equal((await post('/bridge/claim', hookToken)).status, 404)
-  assert.equal((await post('/hooks/unknown', hookToken, body, headers)).status, 404)
+  assert.equal((await post('/v1/hooks/unknown', hookToken, body, headers)).status, 404)
   assert.equal((await post(hook, hookToken, '{', headers)).status, 400)
   assert.equal((await post(hook, hookToken, 'x'.repeat(33 * 1024))).status, 413)
-  assert.equal((await post('/hooks/default', hookToken, body, headers)).status, 404)
+  assert.equal((await post('/v1/hooks/default', hookToken, body, headers)).status, 404)
   const received = await post(hook, hookToken, body, headers)
   assert.equal(received.status, 202)
   const receipt = await received.json()
@@ -47,7 +49,7 @@ test('a webhook is authenticated, validated and deduplicated', async (t) => {
 test('incomplete device configuration rejects a webhook before queuing it', async (t) => {
   const worker = await startWorker(undefined, { MUSE_REFRESH_TOKEN: '' })
   t.after(() => worker.close())
-  const response = await fetch(new URL('/hooks/custom', worker.url), {
+  const response = await fetch(new URL('/v1/hooks/custom', worker.url), {
     method: 'POST',
     headers: { Authorization: 'Bearer HOOK_TOKEN-test' },
     body: 'event',
@@ -56,9 +58,9 @@ test('incomplete device configuration rejects a webhook before queuing it', asyn
 })
 
 test('a deployment without an initial chat rejects new webhooks until a chat is registered', async (t) => {
-  const worker = await startWorker(undefined, { MUSE_SESSION_ID: '' })
+  const worker = await startWorker()
   t.after(() => worker.close())
-  const response = await fetch(new URL('/hooks/custom', worker.url), {
+  const response = await fetch(new URL('/v1/hooks/custom', worker.url), {
     method: 'POST',
     headers: { Authorization: 'Bearer HOOK_TOKEN-test' },
     body: 'event',
@@ -68,7 +70,7 @@ test('a deployment without an initial chat rejects new webhooks until a chat is 
 })
 
 test('the Worker has no browser setup routes', async (t) => {
-  const worker = await startWorker()
+  const worker = await startConfiguredWorker()
   t.after(() => worker.close())
   for (const path of ['/', '/setup', '/setup/', '/setup/setup.js']) {
     const response = await fetch(new URL(path, worker.url), { redirect: 'manual' })

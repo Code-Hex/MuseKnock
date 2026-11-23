@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
 import { test } from 'node:test'
-import { startWorker } from './worker.ts'
+import { startConfiguredWorker } from './worker.ts'
 
 const authToken = 'test-twilio-auth-token'
 const messageSid = 'SM' + 'a'.repeat(32)
@@ -13,9 +13,9 @@ function sign(url: URL, sortedFields: string) {
 }
 
 test('Twilio authenticates the public URL, query and all form parameters before acknowledging an incoming message', async (t) => {
-  const worker = await startWorker(undefined, { TWILIO_AUTH_TOKEN: authToken })
+  const worker = await startConfiguredWorker(undefined, { TWILIO_AUTH_TOKEN: authToken })
   t.after(() => worker.close())
-  const url = new URL('/hooks/twilio?route=%2Fpersonal&v=2', worker.url)
+  const url = new URL('/v1/hooks/twilio?route=%2Fpersonal&v=2', worker.url)
   const form = new URLSearchParams([
     ['MessageSid', messageSid],
     ['FutureField', 'z'],
@@ -41,7 +41,7 @@ test('Twilio authenticates the public URL, query and all form parameters before 
   assert.equal((await post(url, form, { Authorization: 'Bearer HOOK_TOKEN-test' })).status, 401)
   assert.equal((await post(url, form, { 'X-Twilio-Signature': '***' })).status, 401)
   assert.equal(
-    (await post(new URL('/hooks/twilio', worker.url), form, { 'X-Twilio-Signature': signature }))
+    (await post(new URL('/v1/hooks/twilio', worker.url), form, { 'X-Twilio-Signature': signature }))
       .status,
     401,
   )
@@ -61,9 +61,9 @@ test('Twilio authenticates the public URL, query and all form parameters before 
 })
 
 test('Twilio accepts a media-only MMS and rejects signed status callbacks, voice calls and malformed forms', async (t) => {
-  const worker = await startWorker(undefined, { TWILIO_AUTH_TOKEN: authToken })
+  const worker = await startConfiguredWorker(undefined, { TWILIO_AUTH_TOKEN: authToken })
   t.after(() => worker.close())
-  const url = new URL('/hooks/twilio', worker.url)
+  const url = new URL('/v1/hooks/twilio', worker.url)
   const post = (fields: Record<string, string>) => {
     const sortedFields = Object.keys(fields)
       .sort()
@@ -103,9 +103,9 @@ test('Twilio accepts a media-only MMS and rejects signed status callbacks, voice
 })
 
 test('Twilio stays disabled until its own auth token is configured', async (t) => {
-  const worker = await startWorker()
+  const worker = await startConfiguredWorker()
   t.after(() => worker.close())
-  const response = await fetch(new URL('/hooks/twilio', worker.url), {
+  const response = await fetch(new URL('/v1/hooks/twilio', worker.url), {
     method: 'POST',
     body: new URLSearchParams({ Body: 'hello' }),
   })

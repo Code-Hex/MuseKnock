@@ -2,7 +2,8 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { chmod, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { parseArgs, parseEnv } from 'node:util'
 import { z } from 'zod'
-import { museDeviceSchema, sideChatId } from '../src/muse-device.ts'
+import { museDeviceSchema } from '../src/muse-device.ts'
+import { distinctBearerTokens, localBearerTokens } from '../src/bearer-tokens.ts'
 
 const { nodeId, sdkToken, refreshToken } = museDeviceSchema.shape
 const pairing = z.object({
@@ -60,7 +61,7 @@ async function importDevice(): Promise<Record<string, string>> {
 }
 
 // Only rewrite managed assignments. Verify the parsed result before replacing a file with custom content.
-function updateEnv(raw: string, changes: Record<string, string | undefined>) {
+function updateEnv(raw: string, changes: Record<string, string>) {
   let updated = raw
   const expected = parseEnv(raw)
   for (const [key, value] of Object.entries(changes)) {
@@ -70,12 +71,9 @@ function updateEnv(raw: string, changes: Record<string, string | undefined>) {
       'gm',
     )
     updated = updated.replace(line, '')
-    if (value === undefined) delete expected[key]
-    else {
-      expected[key] = value
-      if (updated && !updated.endsWith('\n')) updated += '\n'
-      updated += key + '=' + value + '\n'
-    }
+    expected[key] = value
+    if (updated && !updated.endsWith('\n')) updated += '\n'
+    updated += key + '=' + value + '\n'
   }
   const parsed = parseEnv(updated)
   if (
@@ -104,27 +102,20 @@ async function setup() {
     const raw = await readOptional(filename)
     const current = parseEnv(raw)
     const tokens: Record<string, string> = {}
-    for (const name of ['HOOK_TOKEN', 'MCP_TOKEN', 'MCP_ADMIN_TOKEN']) {
+    for (const name of localBearerTokens) {
       const value = current[name] || randomBytes(32).toString('hex')
       if (!/^[A-Za-z0-9._~-]+$/.test(value)) throw new Error('Invalid token in ' + name)
       tokens[name] = value
     }
-    if (new Set(Object.values(tokens)).size !== 3)
+    if (current.MCP_RECOVERY_TOKEN && !/^[A-Za-z0-9._~-]+$/.test(current.MCP_RECOVERY_TOKEN))
+      throw new Error('Invalid token in MCP_RECOVERY_TOKEN')
+    if (!distinctBearerTokens({ ...current, ...tokens }))
       throw new Error('Use distinct webhook and MCP tokens.')
-    const legacy = current.MUSE_SESSION_ID
-      ? undefined
-      : parseEnv(await readOptional('.env.bridge')).MUSE_SESSION_ID
-    const room = current.MUSE_SESSION_ID || legacy || undefined
-    if (room && !sideChatId.test(room))
-      throw new Error('Invalid MUSE_SESSION_ID. Use 1 to 64 letters, digits or hyphens.')
-    const changes = {
-      ...tokens,
-      BRIDGE_TOKEN: undefined,
-      MUSE_SESSION_ID: room,
-      MUSE_NODE_ID: current.MUSE_NODE_ID ?? '',
-      MUSE_SDK_TOKEN: current.MUSE_SDK_TOKEN ?? '',
-      MUSE_REFRESH_TOKEN: current.MUSE_REFRESH_TOKEN ?? '',
-      ...imported,
+    const changes: Record<string, string> = { ...tokens, ...imported }
+    if (!current.CREDENTIAL_ENCRYPTION_KEY) {
+      for (const name of ['MUSE_NODE_ID', 'MUSE_SDK_TOKEN', 'MUSE_REFRESH_TOKEN']) {
+        changes[name] ??= current[name] ?? ''
+      }
     }
     const key = current.CREDENTIAL_ENCRYPTION_KEY || randomBytes(32).toString('hex')
     if (key.length !== 64 || !/^[0-9a-f]{64}$/i.test(key))
@@ -145,7 +136,7 @@ async function setup() {
     await rm(lock, { force: true })
   }
   console.log(
-    'Worker settings saved to .dev.vars. Complete any empty Muse device settings before deployment.',
+    'Worker settings saved to .dev.vars. For a new pairing, supply the node ID, SDK token and refresh token together.',
   )
 }
 

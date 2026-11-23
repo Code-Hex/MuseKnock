@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import { createHmac, randomUUID } from 'node:crypto'
 import { test } from 'node:test'
-import { startWorker } from './worker.ts'
+import { startConfiguredWorker, startWorker } from './worker.ts'
 
 const secret = 'github-webhook-test-secret'
 const repository = { full_name: 'example/project' }
 const issue = { number: 1, title: '桜', html_url: 'https://github.com/example/project/issues/1' }
 
 function post(origin: URL, event: string, body: string, signed = body) {
-  return fetch(new URL('/hooks/github', origin), {
+  return fetch(new URL('/v1/hooks/github', origin), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -23,7 +23,6 @@ function post(origin: URL, event: string, body: string, signed = body) {
 test('GitHub authenticates the exact payload before acknowledging a ping or parsing events', async (t) => {
   const worker = await startWorker(undefined, {
     GITHUB_WEBHOOK_SECRET: secret,
-    MUSE_SESSION_ID: '',
   })
   t.after(() => worker.close())
   const ping = JSON.stringify({ zen: 'Keep it logically awesome.', hook_id: 123, hook: {} })
@@ -32,7 +31,7 @@ test('GitHub authenticates the exact payload before acknowledging a ping or pars
   assert.equal((await post(worker.url, 'issues', '{')).status, 400)
   assert.equal(
     (
-      await fetch(new URL('/hooks/github', worker.url), {
+      await fetch(new URL('/v1/hooks/github', worker.url), {
         method: 'POST',
         headers: { Authorization: 'Bearer HOOK_TOKEN-test' },
         body: ping,
@@ -50,7 +49,7 @@ test('GitHub authenticates the exact payload before acknowledging a ping or pars
 })
 
 test('GitHub queues supported repository events with bounded summaries and deduplicates signed bodies', async (t) => {
-  const worker = await startWorker(undefined, { GITHUB_WEBHOOK_SECRET: secret })
+  const worker = await startConfiguredWorker(undefined, { GITHUB_WEBHOOK_SECRET: secret })
   t.after(() => worker.close())
   const details = 'private content '.repeat(4000)
   const events = [
@@ -105,7 +104,7 @@ test('GitHub queues supported repository events with bounded summaries and dedup
 })
 
 test('GitHub requires a configured webhook secret', async (t) => {
-  const worker = await startWorker()
+  const worker = await startConfiguredWorker()
   t.after(() => worker.close())
   assert.equal((await post(worker.url, 'ping', '{}')).status, 503)
 })

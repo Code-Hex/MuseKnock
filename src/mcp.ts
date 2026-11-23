@@ -6,9 +6,13 @@ import { identifier } from './identifiers.ts'
 import { sideChatId } from './muse-device.ts'
 import type { Inbox } from './inbox.ts'
 
+export type McpRole = 'read' | 'admin' | 'recovery'
+
 type DeliveryControls = Pick<
   DurableObjectStub<Inbox>,
   | 'status'
+  | 'breakerStatus'
+  | 'rearmBreaker'
   | 'sources'
   | 'setPaused'
   | 'setFilter'
@@ -41,7 +45,7 @@ function failure(text: string): CallToolResult {
 export async function handleMcp(
   request: Request,
   inbox: DeliveryControls,
-  canWrite: boolean,
+  role: McpRole,
 ): Promise<Response> {
   const origin = request.headers.get('Origin')
   if (origin !== null && origin !== new URL(request.url).origin) {
@@ -56,7 +60,7 @@ export async function handleMcp(
     'get_setup_status',
     {
       description:
-        'Check whether the Worker has device credentials in the expected format, can open encrypted credential storage, and has an active destination. Ready means a test can be queued. This check makes no request to Muse.',
+        'Check whether the Worker has device credentials in the expected format, can open encrypted credential storage, and has an active destination. Use get_delivery_breaker to check whether delivery attempts are allowed. This check makes no request to Muse.',
       annotations: readOnly,
     },
     async () => result(await inbox.getSetupStatus()),
@@ -91,13 +95,38 @@ export async function handleMcp(
       annotations: readOnly,
     },
     async ({ id }) => {
-      const delivery = await inbox.status(id)
+      const delivery = await inbox.status(id.toLowerCase())
       if (!delivery) return failure('No delivery found for this receipt ID.')
       return result(delivery)
     },
   )
 
-  if (canWrite) {
+  server.registerTool(
+    'get_delivery_breaker',
+    {
+      description: 'Read the global delivery budget and the attempts used by each source.',
+      annotations: readOnly,
+    },
+    async () => result(await inbox.breakerStatus()),
+  )
+
+  if (role === 'recovery') {
+    server.registerTool(
+      'rearm_delivery_breaker',
+      {
+        description:
+          'When a source or the global budget reaches its limit, fix the loop and wait for in-flight sends to finish. Use the current generation to reset all delivery budgets.',
+        inputSchema: { expectedGeneration: z.number().int().positive() },
+        annotations: changeRule,
+      },
+      async ({ expectedGeneration }) => {
+        const outcome = await inbox.rearmBreaker(expectedGeneration)
+        return { ...result(outcome), isError: !outcome.ok }
+      },
+    )
+  }
+
+  if (role === 'admin') {
     server.registerTool(
       'send_test_notification',
       {
@@ -117,6 +146,7 @@ export async function handleMcp(
       },
       async ({ requestId }) => {
         const receipt = await inbox.sendTestNotification(requestId)
+        if ('invalidBreaker' in receipt) return failure('Correct CIRCUIT_BREAKER and retry with the same request ID.')
         if ('credentialStorageUnavailable' in receipt)
           return failure('Check CREDENTIAL_ENCRYPTION_KEY and saved credentials in the Worker deployment.')
         if ('missingDevice' in receipt)
@@ -137,7 +167,7 @@ export async function handleMcp(
       'register_side_chat',
       {
         description:
-          'Save or update a named webhook destination using the exact session ID of an existing Muse side chat. Ask the user for the ID if it is unknown. The first destination becomes active. Updating an active destination affects future webhooks.',
+          'Verify the session ID with Muse before saving or updating this destination. The lookup posts no message. Ask the user for the ID if it is unknown. The first destination becomes active. Updating an active destination affects future webhooks.',
         inputSchema: {
           name: chatName,
           sessionId: z
@@ -145,23 +175,25 @@ export async function handleMcp(
             .regex(sideChatId)
             .describe('The existing Muse side chat session ID.'),
         },
-        annotations: changeRule,
+        annotations: { ...changeRule, openWorldHint: true },
       },
-      async ({ name, sessionId }) => result(await inbox.registerSideChat(name, sessionId)),
+      async ({ name, sessionId }) => {
+        const destinations = await inbox.registerSideChat(name, sessionId)
+        return 'error' in destinations ? failure(destinations.error) : result(destinations)
+      },
     )
 
     server.registerTool(
       'set_active_side_chat',
       {
         description:
-          'Route future webhooks to a registered side chat by name. Already accepted webhooks keep their original destination.',
+          'Verify a registered side chat with Muse and route future webhooks there by name. Already accepted webhooks keep their original destination.',
         inputSchema: { name: chatName },
-        annotations: changeRule,
+        annotations: { ...changeRule, openWorldHint: true },
       },
       async ({ name }) => {
         const destinations = await inbox.setActiveSideChat(name)
-        if (destinations) return result(destinations)
-        return failure('No registered side chat has that name.')
+        return 'error' in destinations ? failure(destinations.error) : result(destinations)
       },
     )
 

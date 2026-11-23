@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { startWorker } from './worker.ts'
+import { startConfiguredWorker } from './worker.ts'
 
 const secret = 'telegram_test-secret'
 const update = { message: { message_id: 5, chat: { id: -12 }, text: 'Hello' } }
 test('Telegram authenticates updates and deduplicates them by update_id before rate limiting', async (t) => {
-  const worker = await startWorker(undefined, { TELEGRAM_WEBHOOK_SECRET: secret, HOOK_TOKEN: '' })
+  const worker = await startConfiguredWorker(undefined, { TELEGRAM_WEBHOOK_SECRET: secret, HOOK_TOKEN: '' })
   t.after(() => worker.close())
   const post = (body: unknown, token?: string) =>
-    fetch(new URL('/hooks/telegram', worker.url), {
+    fetch(new URL('/v1/hooks/telegram', worker.url), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -27,8 +27,8 @@ test('Telegram authenticates updates and deduplicates them by update_id before r
 })
 
 test('Telegram requires a configured webhook secret', async (t) => {
-  const worker = await startWorker()
+  const worker = await startConfiguredWorker()
   t.after(() => worker.close())
-  const response = await fetch(new URL('/hooks/telegram', worker.url), { method: 'POST' })
+  const response = await fetch(new URL('/v1/hooks/telegram', worker.url), { method: 'POST' })
   assert.equal(response.status, 503)
 })

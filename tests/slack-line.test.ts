@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
 import { test } from 'node:test'
 import { connect } from './mcp-client.ts'
-import { startWorker } from './worker.ts'
+import { startConfiguredWorker, startWorker } from './worker.ts'
 
 const secrets = {
   SLACK_SIGNING_SECRET: 'slack-signing-key',
@@ -23,7 +23,7 @@ function lineHeaders(body: string) {
 }
 
 function post(url: URL, service: string, body: string, headers: Record<string, string>) {
-  return fetch(new URL('/hooks/' + service, url), {
+  return fetch(new URL('/v1/hooks/' + service, url), {
     method: 'POST',
     body,
     headers: { 'Content-Type': 'application/json', ...headers },
@@ -34,7 +34,6 @@ test('Slack and LINE verify signed connection checks before device and destinati
   const worker = await startWorker(undefined, {
     ...secrets,
     MUSE_REFRESH_TOKEN: '',
-    MUSE_SESSION_ID: '',
   })
   t.after(() => worker.close())
   const challenge = '{ "type": "url_verification", "challenge": "桜" }'
@@ -55,9 +54,9 @@ test('Slack and LINE verify signed connection checks before device and destinati
 })
 
 test('Slack and LINE require provider credentials and authenticate exact bytes before parsing', async (t) => {
-  const worker = await startWorker(undefined, secrets)
+  const worker = await startConfiguredWorker(undefined, secrets)
   t.after(() => worker.close())
-  const disabled = await startWorker()
+  const disabled = await startConfiguredWorker()
   t.after(() => disabled.close())
   const malformed = '{'
   for (const [service, sign] of [
@@ -83,7 +82,7 @@ test('Slack and LINE require provider credentials and authenticate exact bytes b
 })
 
 test('Slack and LINE queue callbacks under their own source and accept retries with the same event IDs', async (t) => {
-  const worker = await startWorker(undefined, secrets)
+  const worker = await startConfiguredWorker(undefined, secrets)
   t.after(() => worker.close())
   const client = await connect(new URL('/mcp', worker.url), 'MCP_TOKEN-test')
   t.after(() => client.close())
@@ -115,19 +114,13 @@ test('Slack and LINE queue callbacks under their own source and accept retries w
   })
 })
 
-test('notifications retain message text and omit provider credentials and reply capabilities', async (t) => {
-  const worker = await startWorker(undefined, secrets)
+test('LINE retains message text and omits provider credentials and reply capabilities', async (t) => {
+  const worker = await startConfiguredWorker(undefined, secrets)
   t.after(() => worker.close())
   // A field above the notification limit makes its inclusion observable at the HTTP boundary.
   const long = 'x'.repeat(32 * 1024)
   for (const text of ['Hi', long]) {
     const expected = text === long ? 413 : 200
-    const slack = JSON.stringify({
-      type: 'event_callback',
-      event_id: 'Ev' + expected,
-      token: long,
-      event: { type: 'message', text, response_url: long },
-    })
     const line = JSON.stringify({
       events: [
         {
@@ -138,7 +131,79 @@ test('notifications retain message text and omit provider credentials and reply 
         },
       ],
     })
-    assert.equal((await post(worker.url, 'slack', slack, slackHeaders(slack))).status, expected)
     assert.equal((await post(worker.url, 'line', line, lineHeaders(line))).status, expected)
   }
+})
+
+test('Slack queues UTF-8 previews with channel and message timestamps for long posts and edits', async (t) => {
+  const worker = await startConfiguredWorker(undefined, secrets)
+  t.after(() => worker.close())
+  const longText = '文🌱'.repeat(6000)
+  const escapedText = String.fromCharCode(2).repeat(12_000)
+  const ts = '1234567890.123456'
+  const editTs = '1234567891.123456'
+  for (const [key, event] of Object.entries({
+    short: { text: 'Hello', ts },
+    long: { text: longText, ts },
+    edit: { subtype: 'message_changed', ts: editTs, text: longText, message: { text: escapedText, ts } },
+  })) {
+    const body = JSON.stringify({
+      type: 'event_callback',
+      event_id: key,
+      token: 'callback-secret',
+      event: { type: 'message', channel: 'C123', response_url: 'private-url', ...event },
+    })
+    assert.equal((await post(worker.url, 'slack', body, slackHeaders(body))).status, 200)
+  }
+  const rows = await worker.storedEvents()
+  assert.equal(rows.length, 3)
+  for (const { key, text } of rows) {
+    assert.ok(Buffer.byteLength(text) <= 32 * 1024)
+    assert.doesNotMatch(text, /callback-secret|private-url/)
+    const summary = JSON.parse(text)
+    assert.equal(summary.channel, 'C123')
+    assert.equal(summary.ts, key === 'edit' ? editTs : ts)
+    if (key === 'short') {
+      assert.equal(summary.text, 'Hello')
+    } else {
+      const excerpt = key === 'edit' ? summary.message.text : summary.text
+      const original = key === 'edit' ? escapedText : longText
+      assert.ok(excerpt.length > 0 && excerpt.length < original.length)
+      assert.ok(original.startsWith(excerpt))
+      assert.equal(excerpt.isWellFormed(), true)
+      assert.equal(summary.truncated, true)
+      if (key === 'edit') {
+        assert.equal(summary.message.ts, ts)
+        assert.ok(summary.text.length > 0 && longText.startsWith(summary.text))
+      }
+    }
+  }
+})
+
+test('Slack retracts queued messages and edits in either arrival order and identifies reactions', async (t) => {
+  const worker = await startConfiguredWorker(undefined, secrets)
+  t.after(() => worker.close())
+  const ts = '1234567890.123456'
+  const channel = 'C1'
+  const item = { type: 'message', channel, ts }
+  for (const [event_id, event] of Object.entries({
+    original: { type: 'message', channel, ts, text: 'original' },
+    mention: { type: 'app_mention', channel, ts, text: 'mention' },
+    edit: { type: 'message', subtype: 'message_changed', channel, ts: '2', message: { ts, text: 'edited' } },
+    other: { type: 'message', channel: 'C2', ts, text: 'keep' },
+    deletion: { type: 'message', subtype: 'message_deleted', channel, deleted_ts: ts, ts: '3' },
+    late: { type: 'message', channel, ts, text: 'late' },
+    reaction: { type: 'reaction_added', item, reaction: 'eyes' },
+  })) {
+    const body = JSON.stringify({ type: 'event_callback', team_id: 'T1', event_id, event })
+    assert.equal((await post(worker.url, 'slack', body, slackHeaders(body))).status, 200)
+  }
+  const rows = await worker.storedEvents()
+  const states = Object.fromEntries(rows.map(({ key, state }) => [key, state]))
+  assert.deepEqual(states, {
+    original: 'suppressed', mention: 'suppressed', edit: 'suppressed', other: 'queued',
+    deletion: 'queued', late: 'suppressed', reaction: 'queued',
+  })
+  for (const row of rows.filter(row => row.state === 'suppressed')) assert.equal(row.text, '')
+  assert.deepEqual(JSON.parse(rows.find(row => row.key === 'reaction')!.text).item, item)
 })

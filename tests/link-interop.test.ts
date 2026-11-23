@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHmac } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { createInterface } from 'node:readline'
@@ -6,6 +7,7 @@ import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { fetch as localFetch, Response } from 'miniflare'
+import { z } from 'zod'
 import { sendOverLink } from '../src/link/chat.ts'
 import { connect } from './mcp-client.ts'
 import { startWorker } from './worker.ts'
@@ -37,10 +39,33 @@ test(
         throw Error('SDK peer did not start')
       }),
     ])
+    for (const size of [65_400, 75_000]) {
+      const socket = new WebSocket('ws://127.0.0.1:' + port + '/incomplete-post')
+      await once(socket, 'open')
+      const aborted = new AbortController()
+      const send = socket.send.bind(socket)
+      socket.send = (packet) => {
+        send(packet)
+        // Disconnect after the first large packet reaches the socket, before the JSON body is complete.
+        if (ArrayBuffer.isView(packet) && packet.byteLength > 16_000) aborted.abort()
+      }
+      try {
+        const outcome = await sendOverLink(socket, 'test-123abc', 'same-chat', 'a'.repeat(size),
+          AbortSignal.any([aborted.signal, AbortSignal.timeout(8_000)]))
+        assert.ok(aborted.signal.aborted)
+        assert.equal(outcome, 'not_sent', 'incomplete post of ' + size + ' characters')
+      } finally {
+        socket.close()
+      }
+    }
     for (const [path, outcome] of [
-      ['send', 'sent'],
+      ['late-lookup-reset', 'sent'],
+      ['deleted', 'side_chat_missing'],
+      ['lookup-busy', 'not_sent'],
+      ['lookup-reset', 'not_sent'],
       ['reject-registration', 'not_sent'],
       ['lost-ack', 'unknown'],
+      ['post-reset', 'unknown'],
       ['malformed-ack', 'unknown'],
       ['empty-ack', 'unknown'],
       ['array-ack', 'unknown'],
@@ -57,48 +82,53 @@ test(
             AbortSignal.timeout(8_000),
           ),
           outcome,
+          path,
         )
       } finally {
         if (socket.readyState < WebSocket.CLOSING) socket.close()
       }
     }
     const accountRequests: string[] = []
-    const worker = await startWorker(
-      async (req) => {
-        const url = new URL(req.url)
-        if (url.origin === 'https://hatch.metaaivm.com') {
-          assert.equal(req.headers.get('upgrade'), 'websocket')
-          return localFetch('http://127.0.0.1:' + port + url.pathname + url.search, {
-            headers: {
-              Upgrade: 'websocket',
-              Authorization: req.headers.get('authorization') ?? '',
-            },
-            redirect: 'manual',
-          })
-        }
-        assert.equal(url.origin, 'https://api.muse.ai')
-        accountRequests.push(url.pathname)
-        if (req.method === 'POST' && url.pathname === '/device_token/refresh') {
-          assert.equal(
-            req.headers.get('authorization'),
-            'Bearer hatch_refresh:test-initial-refresh',
-          )
-          assert.deepEqual(await req.json(), {
-            device_id: 'test-123abc',
-            sdk_token: 'mgst_' + 'A'.repeat(43),
-          })
-          return Response.json({ access_token: 'local-access', refresh_token: 'local-refresh' })
-        }
-        assert.equal(req.method, 'GET')
-        assert.equal(url.pathname, '/fetch_vms')
-        assert.equal(req.headers.get('authorization'), 'Bearer local-access')
-        return Response.json({
-          vm_list: [
-            { vm_id: 'local-vm', vm_auth_token: 'local-vm-token', vm_url: 'https://vm.example' },
-          ],
+    let defaultChanged = false
+    let originalLeased = true
+    const outbound: Parameters<typeof startWorker>[0] = async (req) => {
+      const url = new URL(req.url)
+      if (url.origin === 'https://hatch.metaaivm.com') {
+        assert.equal(req.headers.get('upgrade'), 'websocket')
+        return localFetch('http://127.0.0.1:' + port + url.pathname + url.search, {
+          headers: {
+            Upgrade: 'websocket',
+            Authorization: req.headers.get('authorization') ?? '',
+          },
+          redirect: 'manual',
         })
-      },
-      { MUSE_SESSION_ID: '', TELEGRAM_WEBHOOK_SECRET: 'interop-test' },
+      }
+      assert.equal(url.origin, 'https://api.muse.ai')
+      accountRequests.push(url.pathname)
+      if (req.method === 'POST' && url.pathname === '/device_token/refresh') {
+        assert.equal(
+          req.headers.get('authorization'),
+          'Bearer hatch_refresh:test-initial-refresh',
+        )
+        assert.deepEqual(await req.json(), {
+          device_id: 'test-123abc',
+          sdk_token: 'mgst_' + 'A'.repeat(43),
+        })
+        return Response.json({ access_token: 'local-access', refresh_token: 'local-refresh' })
+      }
+      assert.equal(req.method, 'GET')
+      assert.equal(url.pathname, '/fetch_vms')
+      assert.equal(req.headers.get('authorization'), 'Bearer local-access')
+      return Response.json({
+        vm_list: [
+          { vm_id: 'local-vm', vm_auth_token: 'local-vm-token', vm_url: 'https://vm.example', default: !defaultChanged },
+          { vm_id: 'other-vm', vm_auth_token: 'other-token', vm_url: 'https://other.example', default: defaultChanged },
+        ].filter(vm => originalLeased || vm.vm_id !== 'local-vm'),
+      })
+    }
+    const worker = await startWorker(
+      outbound,
+      { TELEGRAM_WEBHOOK_SECRET: 'interop-test', LINE_CHANNEL_SECRET: 'line-test' },
     )
     t.after(() => worker.close())
     const admin = await connect(new URL('/mcp', worker.url), 'MCP_ADMIN_TOKEN-test')
@@ -111,8 +141,33 @@ test(
       active: 'My existing chat',
       chats: [{ name: 'My existing chat', sessionId: 'same-chat' }],
     })
+    const register = (name: string, sessionId: string) =>
+      admin.callTool({ name: 'register_side_chat', arguments: { name, sessionId } })
+    const activate = (name: string) =>
+      admin.callTool({ name: 'set_active_side_chat', arguments: { name } })
+    const missing = await register('My existing chat', 'missing-chat')
+    assert.equal(missing.isError, true)
+    assert.match(JSON.stringify(missing.content), /not found/i)
+    const unavailable = await register('My existing chat', 'busy-chat')
+    assert.equal(unavailable.isError, true)
+    assert.match(JSON.stringify(unavailable.content), /could not verify/i)
+    assert.deepEqual((await admin.callTool({ name: 'list_side_chats' })).structuredContent, selected.structuredContent)
+    assert.notEqual((await register('Other', 'other-chat')).isError, true)
+    assert.deepEqual((await activate('Other')).structuredContent, {
+      active: 'Other', chats: [{ name: 'My existing chat', sessionId: 'same-chat' }, { name: 'Other', sessionId: 'other-chat' }],
+    })
+    defaultChanged = true
+    originalLeased = false
+    assert.equal((await activate('My existing chat')).isError, true)
+    const unchanged = await admin.callTool({ name: 'list_side_chats' })
+    assert.equal(z.object({ active: z.string() }).parse(unchanged.structuredContent).active, 'Other')
+    originalLeased = true
+    assert.notEqual((await activate('My existing chat')).isError, true)
+    const disappeared = await activate('Other')
+    assert.equal(disappeared.isError, true)
+    assert.match(JSON.stringify(disappeared.content), /not found/i)
     const post = () =>
-      fetch(new URL('/hooks/custom', worker.url), {
+      fetch(new URL('/v1/hooks/custom', worker.url), {
         method: 'POST',
         headers: {
           Authorization: 'Bearer HOOK_TOKEN-test',
@@ -151,7 +206,21 @@ test(
       state = status.state
     } while ((state === 'queued' || state === 'sending') && Date.now() < until)
     assert.equal(state, 'sent')
-    const telegram = await fetch(new URL('/hooks/telegram', worker.url), {
+    const filter = await admin.callTool({
+      name: 'set_event_filter', arguments: { source: 'line', types: ['message'] },
+    })
+    assert.notEqual(filter.isError, true)
+    const batch = JSON.stringify({ events: [
+      { type: 'message', webhookEventId: 'L1', message: { type: 'text', id: 'msg1', text: 'withdrawn' } },
+      { type: 'unsend', webhookEventId: 'L2', unsend: { messageId: 'msg1' } },
+    ] })
+    const line = await fetch(new URL('/v1/hooks/line', worker.url), {
+      method: 'POST',
+      headers: { 'X-Line-Signature': createHmac('sha256', 'line-test').update(batch).digest('base64') },
+      body: batch,
+    })
+    assert.equal(line.status, 200)
+    const telegram = await fetch(new URL('/v1/hooks/telegram', worker.url), {
       method: 'POST',
       headers: { 'X-Telegram-Bot-Api-Secret-Token': 'interop-test', 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -160,7 +229,34 @@ test(
       }),
     })
     assert.equal(telegram.status, 200)
+    // A separate installation has its own delivery budget and device token cache.
+    const deletedWorker = await startWorker(outbound, { MUSE_VM_ID: 'local-vm' })
+    t.after(() => deletedWorker.close())
+    const deletedAdmin = await connect(new URL('/mcp', deletedWorker.url), 'MCP_ADMIN_TOKEN-test')
+    t.after(() => deletedAdmin.close())
+    const registered = await deletedAdmin.callTool({
+      name: 'register_side_chat', arguments: { name: 'Deleted', sessionId: 'deleted-after-registration' },
+    })
+    assert.deepEqual(registered.structuredContent, {
+      active: 'Deleted', chats: [{ name: 'Deleted', sessionId: 'deleted-after-registration' }],
+    })
+    const queued = await deletedAdmin.callTool({
+      name: 'send_test_notification', arguments: { requestId: crypto.randomUUID() },
+    })
+    const { id } = z.object({ state: z.literal('queued'), id: z.uuid() }).parse(queued.structuredContent)
+    const timeout = Date.now() + 8_000
+    let final
+    do {
+      const status = await deletedAdmin.callTool({ name: 'get_delivery_status', arguments: { id } })
+      final = z.object({ state: z.string(), reason: z.string().optional() }).parse(status.structuredContent)
+      if (final.state === 'suppressed') break
+      await delay(25)
+    } while (Date.now() < timeout)
+    assert.equal(final.reason, 'side_chat_missing')
+    const setup = await deletedAdmin.callTool({ name: 'get_setup_status' })
+    assert.deepEqual(setup.structuredContent, { deviceConfigured: true, credentialStorageReady: true, active: null, ready: false })
     assert.equal((await exited)[0], 0)
-    assert.deepEqual(accountRequests, ['/device_token/refresh', '/fetch_vms', '/fetch_vms', '/fetch_vms'])
+    assert.equal(accountRequests.filter(path => path === '/device_token/refresh').length, 2)
+    assert.equal(accountRequests.filter(path => path === '/fetch_vms').length, 13)
   },
 )

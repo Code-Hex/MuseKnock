@@ -3,6 +3,7 @@ import { sideChatId } from '../muse-device.ts'
 import { startNoise } from './noise.ts'
 import {
   bodyEnvelope,
+  cancelEnvelope,
   ControlMessages,
   controlMessage,
   fragments,
@@ -10,7 +11,11 @@ import {
   ResponseFrames,
 } from './wire.ts'
 
-type Vm = { noiseHost: string; vmId: string; vmToken: string }
+export type Vm = { noiseHost: string; vmId: string; vmToken: string }
+
+const controlStream = 1
+const lookupStream = 2
+const postStream = 3
 
 function readPackets(socket: WebSocket, signal: AbortSignal) {
   const stream = new ReadableStream<Uint8Array<ArrayBuffer>>(
@@ -55,6 +60,54 @@ function readPackets(socket: WebSocket, signal: AbortSignal) {
   }
 }
 
+async function openChannel(socket: WebSocket, signal: AbortSignal) {
+  socket.binaryType = 'arraybuffer'
+  const receive = readPackets(socket, signal)
+  function send(data: Uint8Array<ArrayBuffer>) {
+    signal.throwIfAborted()
+    if (socket.readyState !== WebSocket.OPEN) throw new Error('Muse Link connection closed')
+    socket.send(data)
+  }
+  const handshake = await startNoise()
+  send(handshake.message1)
+  const keys = await handshake.finish(await receive())
+  send(keys.message3)
+  const frames = new ResponseFrames()
+  return {
+    async write(envelope: Uint8Array) {
+      for (const part of fragments(envelope)) {
+        send(await keys.encrypt(part))
+      }
+    },
+    async read() {
+      while (true) {
+        const frame = frames.push(await keys.decrypt(await receive()))
+        if (frame) return frame
+      }
+    },
+  }
+}
+
+function subscribeRequest(stream: number, sessionId: string) {
+  return requestEnvelope(
+    stream,
+    '/chat/subscribe',
+    [
+      ['Content-Type', 'application/json'],
+      ['Accept', 'application/x-ndjson'],
+      ['x-request-id', crypto.randomUUID()],
+      ['x-app-id', 'musegadget'],
+    ],
+    new TextEncoder().encode(JSON.stringify({ session_id: sessionId })),
+  )
+}
+
+function chatExists(status: number | undefined) {
+  if (status === 404) return false
+  if (status !== undefined && status >= 200 && status < 300) return true
+  throw new Error('Side chat lookup failed')
+}
+
 export async function sendOverLink(
   socket: WebSocket,
   nodeId: string,
@@ -64,30 +117,12 @@ export async function sendOverLink(
 ): Promise<Outcome> {
   let failure: Outcome = 'not_sent'
   try {
-    socket.binaryType = 'arraybuffer'
-    const receive = readPackets(socket, signal)
-    function send(data: Uint8Array<ArrayBuffer>) {
-      signal.throwIfAborted()
-      socket.send(data)
-    }
-    const handshake = await startNoise()
-    send(handshake.message1)
-    const keys = await handshake.finish(await receive())
-    send(keys.message3)
-
-    async function write(envelope: Uint8Array, startsChat = false) {
-      for (const part of fragments(envelope)) {
-        const packet = await keys.encrypt(part)
-        signal.throwIfAborted()
-        if (startsChat) failure = 'unknown'
-        send(packet)
-      }
-    }
+    const { write, read } = await openChannel(socket, signal)
     const registration = crypto.randomUUID()
-    await write(requestEnvelope(1, '/link-control', []))
+    await write(requestEnvelope(controlStream, '/link-control', []))
     await write(
       bodyEnvelope(
-        1,
+        controlStream,
         controlMessage({
           type: 'req',
           id: registration,
@@ -108,16 +143,16 @@ export async function sendOverLink(
     )
 
     const messages = new ControlMessages()
-    const frames = new ResponseFrames()
-    let registered = false
+    let awaitingStream = controlStream
     let chatStatus: number | undefined
     let chatBytes = 0
     let acknowledgement = ''
     const decoder = new TextDecoder('utf-8', { fatal: true })
     while (true) {
-      const frame = frames.push(await keys.decrypt(await receive()))
-      if (!frame) continue
-      if (frame.stream === 1) {
+      const frame = await read()
+      if (frame.stream !== controlStream && frame.stream !== awaitingStream) continue
+      if (frame.reset) throw new Error('Muse reset an active Link stream')
+      if (frame.stream === controlStream) {
         if (
           frame.ended ||
           (frame.status !== undefined && (frame.status < 200 || frame.status >= 300))
@@ -127,34 +162,41 @@ export async function sendOverLink(
         for (const reply of messages.push(frame.body)) {
           if (reply.event === 'link.unpaired' || reply.event === 'node.unpaired')
             throw new Error('Device unpaired')
-          if (registered || reply.id !== registration || reply.method !== undefined) continue
+          if (awaitingStream !== controlStream || reply.id !== registration || reply.method !== undefined) continue
           if (reply.error || reply.ok === false)
             throw new Error('Muse rejected gadget registration')
-          registered = true
-          const headers: [string, string][] = [
-            ['Content-Type', 'application/json'],
-            ['x-request-id', crypto.randomUUID()],
-            ['x-app-id', 'musegadget'],
-          ]
-          const body = new TextEncoder().encode(
-            JSON.stringify({
-              message,
-              output_modality: 'text',
-              device_id: nodeId,
-              session_id: sessionId,
-            }),
-          )
-          if (body.length <= 64 * 1024) {
-            await write(requestEnvelope(2, '/chat/stream', headers, body), true)
-          } else {
-            await write(requestEnvelope(2, '/chat/stream', headers), true)
-            for (let start = 0; start < body.length; start += 16 * 1024) {
-              const end = Math.min(start + 16 * 1024, body.length)
-              await write(bodyEnvelope(2, body.subarray(start, end), end === body.length))
-            }
+          awaitingStream = lookupStream
+          await write(subscribeRequest(lookupStream, sessionId))
+        }
+      } else if (frame.stream === lookupStream) {
+        if (!chatExists(frame.status)) return 'side_chat_missing'
+        if (!frame.ended) await write(cancelEnvelope(lookupStream))
+        awaitingStream = postStream
+        const headers: [string, string][] = [
+          ['Content-Type', 'application/json'],
+          ['x-request-id', crypto.randomUUID()],
+          ['x-app-id', 'musegadget'],
+        ]
+        const body = new TextEncoder().encode(
+          JSON.stringify({
+            message,
+            output_modality: 'text',
+            device_id: nodeId,
+            session_id: sessionId,
+          }),
+        )
+        if (body.length <= 64 * 1024) {
+          await write(requestEnvelope(postStream, '/chat/stream', headers, body))
+        } else {
+          await write(requestEnvelope(postStream, '/chat/stream', headers))
+          for (let start = 0; start < body.length; start += 16 * 1024) {
+            const end = Math.min(start + 16 * 1024, body.length)
+            await write(bodyEnvelope(postStream, body.subarray(start, end), end === body.length))
           }
         }
-      } else if (frame.stream === 2 && registered) {
+        // The socket now has the complete request. Retrying after a lost acknowledgement could post twice.
+        failure = 'unknown'
+      } else {
         if (frame.status !== undefined) {
           if (chatStatus !== undefined || frame.status < 100 || frame.status > 599)
             throw new Error('Invalid Muse response status')
@@ -178,15 +220,13 @@ export async function sendOverLink(
   }
 }
 
-export async function sendSideChat(
+async function withLink<T>(
   vm: Vm,
-  nodeId: string,
-  sessionId: string,
-  message: string,
-): Promise<Outcome> {
-  if (!nodeId || !sideChatId.test(sessionId)) return 'not_sent'
+  timeout: number,
+  run: (socket: WebSocket, signal: AbortSignal) => Promise<T>,
+): Promise<T> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 75_000)
+  const timer = setTimeout(() => controller.abort(), timeout)
   let socket: (WebSocket & { accept(): void }) | undefined
   try {
     const url = new URL('https://' + vm.noiseHost + '/v1/noise')
@@ -199,12 +239,10 @@ export async function sendSideChat(
     socket = (response as Response & { webSocket?: typeof socket }).webSocket
     if (response.status !== 101 || !socket) {
       await response.body?.cancel()
-      return 'not_sent'
+      throw new Error('Muse Link upgrade failed')
     }
     socket.accept()
-    return await sendOverLink(socket, nodeId, sessionId, message, controller.signal)
-  } catch {
-    return 'not_sent'
+    return await run(socket, controller.signal)
   } finally {
     clearTimeout(timer)
     controller.abort()
@@ -214,4 +252,30 @@ export async function sendSideChat(
       // The peer may have closed while this Worker was finishing the receipt.
     }
   }
+}
+
+export async function sendSideChat(
+  vm: Vm,
+  nodeId: string,
+  sessionId: string,
+  message: string,
+): Promise<Outcome> {
+  if (!nodeId || !sideChatId.test(sessionId)) return 'not_sent'
+  try {
+    return await withLink(vm, 75_000, (socket, signal) =>
+      sendOverLink(socket, nodeId, sessionId, message, signal),
+    )
+  } catch {
+    return 'not_sent'
+  }
+}
+
+export function sideChatExists(vm: Vm, sessionId: string): Promise<boolean> {
+  return withLink(vm, 15_000, async (socket, signal) => {
+    const { write, read } = await openChannel(socket, signal)
+    await write(subscribeRequest(1, sessionId))
+    const frame = await read()
+    if (frame.stream !== 1 || frame.reset) throw new Error('Invalid side chat lookup response')
+    return chatExists(frame.status)
+  })
 }
