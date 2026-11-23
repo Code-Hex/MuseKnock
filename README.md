@@ -4,7 +4,7 @@
 
 MuseKnock delivers webhooks from Cloudflare Workers to an existing Muse side chat. You choose the destination in Muse through an MCP connector. The Worker handles delivery while your computer is off.
 
-[Quick start](#quick-start) · **English** · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
+[Quick start](#quick-start) · [Recipes](docs/recipes/README.md) · **English** · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 ## Quick start
 
@@ -70,6 +70,8 @@ Check that `getWebhookInfo` returns your URL, then open a private chat with the 
 3. Check **Recent Deliveries** if an event is missing. GitHub does not automatically retry failures. The Worker accepts up to 512 KiB per request and 10 new events per source per minute. After a `429`, wait a minute and click **Redeliver**. Repeated deliveries of the same body count once within seven days. [Failed webhook deliveries](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/handling-failed-webhook-deliveries)
 
 ### X public posts
+
+Prefer to forward the X notifications already on your iPhone? See the [iOS Shortcuts recipe](docs/recipes/x-notifications.md).
 
 Use an approved X developer app with access to the X Activity API. Save its OAuth 2.0 **client secret** to the Worker as `X_OAUTH2_CLIENT_SECRET`. The Worker uses this secret for the registration challenge (CRC) and to verify signed deliveries. X bills for each delivered Post event, including deletions. [X Activity API](https://docs.x.com/x-api/activity/introduction)
 

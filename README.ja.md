@@ -4,7 +4,7 @@
 
 MuseKnock は Cloudflare Workers で Webhook を受け取り、既存の Muse サイドチャットに通知を届けます。投稿先は Muse の MCP コネクタから選べます。パソコンの電源を切っても Worker が配信を続けます。
 
-[クイックスタート](#クイックスタート) · [English](README.md) · **日本語** · [简体中文](README.zh-CN.md)
+[クイックスタート](#クイックスタート) · [レシピ集](docs/recipes/README.ja.md) · [English](README.md) · **日本語** · [简体中文](README.zh-CN.md)
 
 ## クイックスタート
 
@@ -70,6 +70,8 @@ curl --fail-with-body "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
 3. 届かない場合は **Recent Deliveries** を開きます。GitHub は失敗した配信を自動再送しません。Worker の上限はリクエスト本文が 512 KiB、送信元ごとの新規イベントが毎分 10 件です。`429` の場合は 1 分待ち、**Redeliver** を押します。7 日以内に同じ本文を再送しても、通知は重複しません。[失敗した配信の処理](https://docs.github.com/ja/webhooks/testing-and-troubleshooting-webhooks/handling-failed-webhook-deliveries)
 
 ### X の公開投稿
+
+iPhone に届く X の通知を活用する方法は、[ショートカットのレシピ](docs/recipes/x-notifications.ja.md)を参照してください。
 
 X Activity API を利用できる承認済みの開発者アプリを用意します。OAuth 2.0 の **Client Secret** を Worker の `X_OAUTH2_CLIENT_SECRET` に保存します。Worker はこの値で登録時のチャレンジ（CRC）に応答し、配信の署名を検証します。X は削除を含む投稿イベントの配信ごとに課金します。[X Activity API](https://docs.x.com/x-api/activity/introduction)
 

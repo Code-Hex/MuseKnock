@@ -4,7 +4,7 @@
 
 MuseKnock 通过 Cloudflare Workers 把 Webhook 通知发送到已有的 Muse 侧边对话。你可以在 Muse 中通过 MCP 连接器选择目标对话。关闭电脑后，Worker 会继续投递通知。
 
-[快速开始](#快速开始) · [English](README.md) · [日本語](README.ja.md) · **简体中文**
+[快速开始](#快速开始) · [使用案例](docs/recipes/README.zh-CN.md) · [English](README.md) · [日本語](README.ja.md) · **简体中文**
 
 ## 快速开始
 
@@ -70,6 +70,8 @@ curl --fail-with-body "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
 3. 如果通知未送达，请检查 **Recent Deliveries**。GitHub 不会自动重试失败的投递。Worker 每次最多接收 512 KiB，每个来源每分钟最多接收 10 个新事件。遇到 `429` 时，等待一分钟后点击 **Redeliver**。七天内重复投递相同正文只会产生一条通知。[处理失败的投递](https://docs.github.com/zh/webhooks/testing-and-troubleshooting-webhooks/handling-failed-webhook-deliveries)
 
 ### X 公开帖子
+
+要转发 iPhone 上收到的 X 通知，请参阅[快捷指令使用案例](docs/recipes/x-notifications.zh-CN.md)。
 
 准备一个已获批准且可以使用 X Activity API 的开发者应用，将其 OAuth 2.0 **Client Secret** 保存为 Worker 的 `X_OAUTH2_CLIENT_SECRET`。Worker 用它响应注册时的验证请求（CRC）并验证投递签名。X 按实际投递的帖子事件收费，包括删除事件。[X Activity API](https://docs.x.com/x-api/activity/introduction)
 
