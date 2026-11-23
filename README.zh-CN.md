@@ -31,7 +31,7 @@ MuseKnock 通过 Cloudflare Workers 把 Webhook 通知发送到已有的 Muse �
 2. “将现有会话 `已有会话ID` 注册为‘构建通知’，并设为通知目标。”请使用设备原来的 `--session-id`，或旧部署中的 `MUSE_SESSION_ID`。`register_side_chat` 保存的是 MuseKnock 中的名称。使用陌生的 ID，首次投递时可能会创建新对话。[Gadget SDK 侧边对话说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “发送一条测试通知并检查回执。”Muse 使用新的 UUID 作为 `requestId` 调用 `send_test_notification`，然后用返回的回执 ID 调用 `get_delivery_status`。当状态为 `sent` 时，打开所选对话查看消息。重试同一次测试时，请使用相同的请求 ID。
 
-**4. 连接事件来源。** 如需接入 Slack、LINE、Twilio、Telegram、企业微信、GitHub 或 X，请参阅[直接连接服务](#直接连接服务)。Bluesky 的设置见[连接 Bluesky](#连接-bluesky)。支持自定义 Bearer 请求头的服务可以使用下面的通用 Webhook。
+**4. 连接事件来源。** 如需接入 Slack、LINE、Twilio、Telegram、企业微信、GitHub 或 X，请参阅[直接连接服务](#直接连接服务)。Bluesky 和 Discord 的设置见[连接 Bluesky](#连接-bluesky)和[连接 Discord](#连接-discord)。支持自定义 Bearer 请求头的服务可以使用下面的通用 Webhook。
 
 在发送服务的 Webhook 设置中，将请求设为发往同一 Worker 的 `/hooks/default` 的 `POST`，添加 `Authorization: Bearer YOUR_HOOK_TOKEN` 和 `Content-Type: application/json`。发送 `{"message":"构建完成"}` 等正文后会收到回执 ID。之后可以在 Muse 中查看投递状态、暂停来源或筛选事件类型。
 
@@ -85,6 +85,14 @@ curl --fail-with-body "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
 | 自己在 Bluesky 托管的账号收到的提及、点赞、关注等通知 | 将自己的用户名填入 `BLUESKY_IDENTIFIER`。生成一个不允许访问私信的专用应用密码，并保存为 Worker Secret `BLUESKY_APP_PASSWORD`。[创建应用密码](https://bsky.app/settings/app-passwords) | `bluesky-notifications` |
 
 每个账号首次成功获取数据时只记录起点。此后发布新帖或让其他账号提及你，下一次轮询后在所选 Muse 侧边对话中确认。每次轮询每个来源最多读取十条，积压的内容会在后续轮询中继续读取。读取通知不会修改其在 Bluesky 的已读状态。[公开帖子 API](https://github.com/bluesky-social/bsky/blob/main/lexicons/app/bsky/feed/getAuthorFeed.json) · [账号通知 API](https://github.com/bluesky-social/bsky/blob/main/lexicons/app/bsky/notification/listNotifications.json)
+
+## 连接 Discord
+
+Worker 每五分钟检查一个 Discord 服务器文字频道。首次检查仅记录最新消息的位置，之后每次按时间顺序读取最多十条新消息。普通消息和回复会被转发到 Muse，内容包括作者、正文前 2,000 个字符，以及附件名称、大小和文件类型。
+
+1. 在 Discord Developer Portal 创建应用，打开 **Bot**，启用 **Message Content Intent**。已验证的应用需要申请该权限。复制机器人令牌，在 Worker 中将其保存为 Secret `DISCORD_BOT_TOKEN`。[访问消息内容](https://docs.discord.com/developers/events/gateway#message-content-intent)
+2. 在 **Installation → Guild Install** 中选择 `bot` 权限范围，通过安装链接将机器人添加到服务器。在目标频道为机器人授予 **查看频道** 和 **读取消息历史记录** 权限。成员在该频道发布的消息将转发到所选 Muse 对话。[安装 Discord 应用](https://docs.discord.com/developers/resources/application#installation-context) · [频道消息权限](https://docs.discord.com/developers/resources/message#get-channel-messages)
+3. 在 Discord 的 **用户设置 → 高级 → 开发者模式** 中启用开发者模式。右键点击目标频道并选择 **复制频道 ID**，将该值保存为 Worker 的 `DISCORD_CHANNEL_ID` 并部署。首次定时检查完成后，在频道中发送一条消息，下一次检查后打开 Muse 确认投递。MCP 的来源名称为 `discord`，事件类型为 `message`。切换频道后，Worker 会从新频道的最新消息开始。
 
 ## 切换目标对话
 

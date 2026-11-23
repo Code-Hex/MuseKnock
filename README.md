@@ -31,7 +31,7 @@ Stop any executor or SDK daemon that uses this device identity and disable its a
 2. “Register the existing session `YOUR-EXISTING-SESSION-ID` as `builds` and select it for notifications.” Use the exact `--session-id` from your gadget or the previous deployment’s `MUSE_SESSION_ID`. `register_side_chat` saves the destination. MuseKnock can list its registered names. An unfamiliar session ID may create a new chat on first delivery. [Gadget SDK side chats](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “Send one test notification and check its receipt.” Muse calls `send_test_notification` with a fresh UUID as `requestId`, then `get_delivery_status` with the returned receipt ID. Look in the selected chat when the status is `sent`. Reuse the same request ID when retrying the same test.
 
-**4. Connect your event source.** For Slack, LINE, Twilio, Telegram, WeCom, GitHub, or X, follow [Connect a service directly](#connect-a-service-directly). For Bluesky, see [Connect Bluesky](#connect-bluesky). For a sender that supports a custom Bearer header, use the generic webhook below.
+**4. Connect your event source.** For Slack, LINE, Twilio, Telegram, WeCom, GitHub, or X, follow [Connect a service directly](#connect-a-service-directly). For Bluesky or Discord, see [Connect Bluesky](#connect-bluesky) or [Connect Discord](#connect-discord). For a sender that supports a custom Bearer header, use the generic webhook below.
 
 In the sending service, configure `POST /hooks/default` on the same Worker, with `Authorization: Bearer YOUR_HOOK_TOKEN` and `Content-Type: application/json`. A body such as `{"message":"Build finished"}` returns a receipt ID. You can ask Muse to check that receipt, pause sources, and filter event types.
 
@@ -85,6 +85,14 @@ After selecting a Muse chat, open the Worker's **Settings → Variables and Secr
 | Notifications for your own Bluesky-hosted account, including mentions, likes and follows | Set `BLUESKY_IDENTIFIER` to your handle. Generate a dedicated app password with direct message access disabled and save it as the Worker secret `BLUESKY_APP_PASSWORD`. [Bluesky app passwords](https://bsky.app/settings/app-passwords) | `bluesky-notifications` |
 
 The first successful poll for each account establishes where to start. To test delivery, wait for that poll, then publish a new post or have someone mention your account. Check the selected side chat after the next poll. Each source reads up to ten entries per poll and continues through a backlog on later runs. Reading notifications leaves their read status unchanged. [Author feed](https://github.com/bluesky-social/bsky/blob/main/lexicons/app/bsky/feed/getAuthorFeed.json) · [Account notifications](https://github.com/bluesky-social/bsky/blob/main/lexicons/app/bsky/notification/listNotifications.json)
+
+## Connect Discord
+
+The Worker checks one Discord server text channel every five minutes. It starts at the latest message on the first successful check. Subsequent checks read up to ten new messages per run in chronological order. Normal messages and replies appear in Muse with their author, the first 2,000 characters of text, and attachment names, sizes and media types.
+
+1. In the Discord Developer Portal, create an application. Open **Bot**, enable **Message Content Intent**, and copy the bot token. Verified apps need approval for this intent. Save the token to the Worker as the secret `DISCORD_BOT_TOKEN`. [Discord message content access](https://docs.discord.com/developers/events/gateway#message-content-intent)
+2. Under **Installation**, configure **Guild Install** with the `bot` scope. Open the installation link to add the bot to your server. In the chosen channel’s permissions, grant the bot **View Channel** and **Read Message History**. Everyone whose messages the bot reads there can trigger a notification in the selected Muse chat. [Discord installation guide](https://docs.discord.com/developers/resources/application#installation-context) · [Channel history permissions](https://docs.discord.com/developers/resources/message#get-channel-messages)
+3. In Discord, enable **User Settings → Advanced → Developer Mode**. Right-click the channel and choose **Copy Channel ID**. Set `DISCORD_CHANNEL_ID` to the copied ID in the Worker, deploy the changes, and wait for the first scheduled check. Send a message and check Muse after the next run. The MCP source is `discord` and the event type is `message`. Changing the channel ID starts a new baseline.
 
 ## Change the destination
 

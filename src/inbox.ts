@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers'
 import { pollBluesky, type BlueskyCheckpoint } from './bluesky.ts'
 import { pollBlueskyNotifications } from './bluesky-notifications.ts'
+import { pollDiscord, type DiscordCheckpoint } from './discord.ts'
 import { sendSideChat } from './link/chat.ts'
 import { getMuseVm, type DeviceCredentials } from './muse-account.ts'
 import { museDeviceSchema, sideChatId, type MuseDevice } from './muse-device.ts'
@@ -13,6 +14,8 @@ export type MuseBindings = {
   MUSE_REFRESH_TOKEN: string
   MUSE_SESSION_ID?: string
   MUSE_VM_ID?: string
+  DISCORD_CHANNEL_ID?: string
+  DISCORD_BOT_TOKEN?: string
   BLUESKY_DID?: string
   BLUESKY_IDENTIFIER?: string
   BLUESKY_APP_PASSWORD?: string
@@ -69,7 +72,7 @@ export class Inbox extends DurableObject<MuseBindings> {
     return 'accepted'
   }
 
-  async pollBlueskySources() {
+  async pollSources() {
     if (!this.getSetupStatus().ready) return
     // Scheduled invocations can overlap while the first one is waiting on the Bluesky API.
     this.activePoll ??= this.pollConfiguredSources().finally(() => {
@@ -79,29 +82,36 @@ export class Inbox extends DurableObject<MuseBindings> {
   }
 
   private async pollConfiguredSources() {
-    const {
-      BLUESKY_DID: did,
-      BLUESKY_IDENTIFIER: identifier,
-      BLUESKY_APP_PASSWORD: password,
-    } = this.env
     const polls: Promise<void>[] = []
-    if (did) polls.push(this.pollPublicPosts(did))
-    if (identifier && password) {
-      polls.push(
-        pollBlueskyNotifications(identifier, password, this.ctx.storage, (events) =>
-          this.enqueueBatch('bluesky-notifications', events),
-        ),
-      )
+    if (this.env.BLUESKY_DID) polls.push(this.pollPublicPosts(this.env.BLUESKY_DID))
+    if (this.env.BLUESKY_IDENTIFIER || this.env.BLUESKY_APP_PASSWORD) {
+      polls.push(this.pollAccountNotifications())
     }
-    const outcomes = await Promise.allSettled(polls)
-    if (Boolean(identifier) !== Boolean(password)) {
-      throw new Error(
-        'Configure both BLUESKY_IDENTIFIER and BLUESKY_APP_PASSWORD for account notifications',
-      )
+    if (this.env.DISCORD_CHANNEL_ID || this.env.DISCORD_BOT_TOKEN) {
+      polls.push(this.pollDiscordChannel())
     }
-    for (const outcome of outcomes) {
+    for (const outcome of await Promise.allSettled(polls)) {
       if (outcome.status === 'rejected') throw outcome.reason
     }
+  }
+
+  private async pollDiscordChannel() {
+    const { DISCORD_CHANNEL_ID: channel, DISCORD_BOT_TOKEN: token } = this.env
+    if (!channel || !token) throw new Error('Configure DISCORD_CHANNEL_ID and DISCORD_BOT_TOKEN')
+    const previous = await this.ctx.storage.get<DiscordCheckpoint>('discord-channel')
+    const checkpoint = await pollDiscord(channel, token, previous, (events) =>
+      this.enqueueBatch('discord', events),
+    )
+    await this.ctx.storage.put('discord-channel', checkpoint)
+  }
+
+  private async pollAccountNotifications() {
+    const { BLUESKY_IDENTIFIER: identifier, BLUESKY_APP_PASSWORD: password } = this.env
+    if (!identifier || !password)
+      throw new Error('Configure BLUESKY_IDENTIFIER and BLUESKY_APP_PASSWORD')
+    await pollBlueskyNotifications(identifier, password, this.ctx.storage, (events) =>
+      this.enqueueBatch('bluesky-notifications', events),
+    )
   }
 
   private async pollPublicPosts(did: string) {

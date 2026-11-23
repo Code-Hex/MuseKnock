@@ -59,8 +59,14 @@ app.route('/mcp', mcp)
 export default {
   fetch: app.fetch,
   async scheduled(_controller: ScheduledController, env: WorkerEnv['Bindings']) {
-    if (env.BLUESKY_DID || env.BLUESKY_IDENTIFIER || env.BLUESKY_APP_PASSWORD) {
-      await inbox(env).pollBlueskySources()
+    if (
+      env.BLUESKY_DID ||
+      env.BLUESKY_IDENTIFIER ||
+      env.BLUESKY_APP_PASSWORD ||
+      env.DISCORD_CHANNEL_ID ||
+      env.DISCORD_BOT_TOKEN
+    ) {
+      await inbox(env).pollSources()
     }
   },
 } satisfies ExportedHandler<WorkerEnv['Bindings']>

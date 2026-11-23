@@ -31,7 +31,7 @@ Cloudflare と GitHub のアカウント、認証済みの Muse 端末情報、�
 2. 「既存のセッション `既存のセッションID` を『ビルド通知』として登録し、通知先にして」。ID にはガジェットの `--session-id`、または旧環境の `MUSE_SESSION_ID` の正確な値を使います。`register_side_chat` が登録する名前は MuseKnock 内のものです。未知の ID を使うと初回の投稿で新しいチャットが作られる場合があります。[Gadget SDK のサイドチャット](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. 「テスト通知を1件送り、配信状態を確認して」。Muse は新しい UUID を `requestId` として `send_test_notification` を呼び、返った受付 ID を `get_delivery_status` に渡します。`sent` になったら選んだチャットを開きます。同じテストを再試行するときは同じリクエスト ID を使います。
 
-**4. 送信元サービスを接続します。** Slack、LINE、Twilio、Telegram、企業微信、GitHub、X には[サービス別の設定手順](#サービスを直接接続する)を使います。Bluesky は [Bluesky を接続する](#bluesky-を接続する)を参照してください。Bearer ヘッダーを指定できる送信元には、次の汎用 Webhook が使えます。
+**4. 送信元サービスを接続します。** Slack、LINE、Twilio、Telegram、企業微信、GitHub、X には[サービス別の設定手順](#サービスを直接接続する)を使います。Bluesky と Discord の設定は [Bluesky を接続する](#bluesky-を接続する)と [Discord を接続する](#discord-を接続する)を参照してください。Bearer ヘッダーを指定できる送信元には、次の汎用 Webhook が使えます。
 
 送信元の Webhook 設定で、同じ Worker の `/hooks/default` に `POST` を指定します。ヘッダーを `Authorization: Bearer YOUR_HOOK_TOKEN`、`Content-Type: application/json` とし、例えば `{"message":"ビルドが完了しました"}` を送ると受付 ID が返ります。以降は Muse から配信状態の確認、通知元の一時停止、イベント種別の絞り込みができます。
 
@@ -85,6 +85,14 @@ Muse の投稿先を選んだら、Worker の **Settings → Variables and Secre
 | Bluesky がホストする自分のアカウントへのメンション、いいね、フォローなど | `BLUESKY_IDENTIFIER` に自分のハンドルを設定します。DM へのアクセスを無効にした専用のアプリパスワードを作成し、Worker の Secret `BLUESKY_APP_PASSWORD` に保存します。[アプリパスワードの作成](https://bsky.app/settings/app-passwords) | `bluesky-notifications` |
 
 各アカウントの初回取得で開始位置を記録します。動作確認はその後に、新しく公開投稿するか、別のアカウントからメンションを送ってください。次の取得後に選択したサイドチャットで確認できます。1回に取得するのは各送信元につき最大10件で、続きは次回以降に取得します。通知を取得しても Bluesky 上の既読状態は変わりません。[公開投稿の API](https://github.com/bluesky-social/bsky/blob/main/lexicons/app/bsky/feed/getAuthorFeed.json) · [アカウント通知の API](https://github.com/bluesky-social/bsky/blob/main/lexicons/app/bsky/notification/listNotifications.json)
+
+## Discord を接続する
+
+Worker が Discord サーバーのテキストチャンネルを 1 つ、5 分ごとに確認します。初回はその時点の最新メッセージを記録し、次回から新着を毎回最大 10 件、古い順に読み取ります。通常のメッセージと返信について、投稿者、本文の先頭 2,000 文字、添付ファイルの名前・サイズ・種類が Muse に届きます。
+
+1. Discord Developer Portal でアプリを作成し、**Bot** で **Message Content Intent** を有効にします。認証済みアプリにはこの権限の承認が必要です。Bot トークンをコピーし、Worker の Secret `DISCORD_BOT_TOKEN` に保存します。[メッセージ本文へのアクセス](https://docs.discord.com/developers/events/gateway#message-content-intent)
+2. **Installation** の **Guild Install** に `bot` スコープを設定し、インストールリンクから Bot をサーバーに追加します。対象チャンネルで Bot に **チャンネルを見る** と **メッセージ履歴を読む** 権限を付与します。そのチャンネルに投稿できる人の発言が、選択した Muse チャットに届きます。[Discord アプリのインストール](https://docs.discord.com/developers/resources/application#installation-context)・[チャンネル履歴の権限](https://docs.discord.com/developers/resources/message#get-channel-messages)
+3. Discord の **ユーザー設定 → 詳細設定 → 開発者モード** を有効にします。対象チャンネルを右クリックし、**チャンネル ID をコピー** します。Worker の `DISCORD_CHANNEL_ID` にその ID を設定してデプロイします。初回の定期確認が終わってからメッセージを送り、次の確認後に Muse を開きます。MCP の送信元名は `discord`、イベント種別は `message` です。対象チャンネルを変更すると、新しいチャンネルの最新位置から開始します。
 
 ## 投稿先を切り替える
 
