@@ -1,4 +1,6 @@
 import { DurableObject } from 'cloudflare:workers'
+import { pollBluesky, type BlueskyCheckpoint } from './bluesky.ts'
+import { pollBlueskyNotifications } from './bluesky-notifications.ts'
 import { sendSideChat } from './link/chat.ts'
 import { getMuseVm, type DeviceCredentials } from './muse-account.ts'
 import { museDeviceSchema, sideChatId, type MuseDevice } from './muse-device.ts'
@@ -11,6 +13,9 @@ export type MuseBindings = {
   MUSE_REFRESH_TOKEN: string
   MUSE_SESSION_ID?: string
   MUSE_VM_ID?: string
+  BLUESKY_DID?: string
+  BLUESKY_IDENTIFIER?: string
+  BLUESKY_APP_PASSWORD?: string
 }
 
 export function museDevice(env: MuseBindings) {
@@ -27,6 +32,7 @@ const retryDelay = 60_000
 
 export class Inbox extends DurableObject<MuseBindings> {
   private readonly queue: DeliveryQueue
+  private activePoll?: Promise<void>
 
   constructor(ctx: DurableObjectState, env: MuseBindings) {
     super(ctx, env)
@@ -61,6 +67,49 @@ export class Inbox extends DurableObject<MuseBindings> {
       if ('limited' in receipt) return 'limited'
     }
     return 'accepted'
+  }
+
+  async pollBlueskySources() {
+    if (!this.getSetupStatus().ready) return
+    // Scheduled invocations can overlap while the first one is waiting on the Bluesky API.
+    this.activePoll ??= this.pollConfiguredSources().finally(() => {
+      this.activePoll = undefined
+    })
+    await this.activePoll
+  }
+
+  private async pollConfiguredSources() {
+    const {
+      BLUESKY_DID: did,
+      BLUESKY_IDENTIFIER: identifier,
+      BLUESKY_APP_PASSWORD: password,
+    } = this.env
+    const polls: Promise<void>[] = []
+    if (did) polls.push(this.pollPublicPosts(did))
+    if (identifier && password) {
+      polls.push(
+        pollBlueskyNotifications(identifier, password, this.ctx.storage, (events) =>
+          this.enqueueBatch('bluesky-notifications', events),
+        ),
+      )
+    }
+    const outcomes = await Promise.allSettled(polls)
+    if (Boolean(identifier) !== Boolean(password)) {
+      throw new Error(
+        'Configure both BLUESKY_IDENTIFIER and BLUESKY_APP_PASSWORD for account notifications',
+      )
+    }
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') throw outcome.reason
+    }
+  }
+
+  private async pollPublicPosts(did: string) {
+    const previous = await this.ctx.storage.get<BlueskyCheckpoint>('bluesky-posts')
+    const checkpoint = await pollBluesky(did, previous, (events) =>
+      this.enqueueBatch('bluesky', events),
+    )
+    await this.ctx.storage.put('bluesky-posts', checkpoint)
   }
 
   async alarm() {

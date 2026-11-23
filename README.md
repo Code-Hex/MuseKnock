@@ -31,7 +31,7 @@ Stop any executor or SDK daemon that uses this device identity and disable its a
 2. “Register the existing session `YOUR-EXISTING-SESSION-ID` as `builds` and select it for notifications.” Use the exact `--session-id` from your gadget or the previous deployment’s `MUSE_SESSION_ID`. `register_side_chat` saves the destination. MuseKnock can list its registered names. An unfamiliar session ID may create a new chat on first delivery. [Gadget SDK side chats](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “Send one test notification and check its receipt.” Muse calls `send_test_notification` with a fresh UUID as `requestId`, then `get_delivery_status` with the returned receipt ID. Look in the selected chat when the status is `sent`. Reuse the same request ID when retrying the same test.
 
-**4. Connect your event source.** For Slack, LINE, Twilio, Telegram, or WeCom, follow [Connect a service directly](#connect-a-service-directly). For a sender that supports a custom Bearer header, use the generic webhook below.
+**4. Connect your event source.** For Slack, LINE, Twilio, Telegram, WeCom, GitHub, or X, follow [Connect a service directly](#connect-a-service-directly). For Bluesky, see [Connect Bluesky](#connect-bluesky). For a sender that supports a custom Bearer header, use the generic webhook below.
 
 In the sending service, configure `POST /hooks/default` on the same Worker, with `Authorization: Bearer YOUR_HOOK_TOKEN` and `Content-Type: application/json`. A body such as `{"message":"Build finished"}` returns a receipt ID. You can ask Muse to check that receipt, pause sources, and filter event types.
 
@@ -57,6 +57,34 @@ curl --fail-with-body "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
 ```
 
 Check that `getWebhookInfo` returns your URL, then open a private chat with the bot and send a message. MuseKnock forwards messages, channel posts and their edits, including text or captions when present. Check the selected Muse chat to confirm delivery. Anyone who can message the bot can trigger a notification.
+
+### GitHub repository events
+
+1. Generate a random secret and save it to the Worker as `GITHUB_WEBHOOK_SECRET`. In the repository, open **Settings → Webhooks → Add webhook**. Set the payload URL to `https://YOUR-WORKER/hooks/github`, select `application/json`, enter the same secret, and keep SSL verification enabled.
+2. Under **Let me select individual events**, choose from `push`, `issues`, `pull_request`, `release`, and `workflow_run`. Enable the hook. The Worker verifies GitHub’s SHA-256 signature and acknowledges the initial `ping` without posting to Muse. Trigger a selected event to see its summary in the chat. [Create a repository webhook](https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks)
+3. Check **Recent Deliveries** if an event is missing. GitHub does not automatically retry failures. The Worker accepts up to 512 KiB per request and 10 new events per source per minute. After a `429`, wait a minute and click **Redeliver**. Repeated deliveries of the same body count once within seven days. [Failed webhook deliveries](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/handling-failed-webhook-deliveries)
+
+### X public posts
+
+Use an approved X developer app with access to the X Activity API. Save its OAuth 2.0 **client secret** to the Worker as `X_OAUTH2_CLIENT_SECRET`. The Worker uses this secret for the registration challenge (CRC) and to verify signed deliveries. X bills for each delivered Post event, including deletions. [X Activity API](https://docs.x.com/x-api/activity/introduction)
+
+Use the app-only Bearer Token for these two X API calls. Send JSON with `Authorization: Bearer YOUR_APP_BEARER_TOKEN` and `Content-Type: application/json`.
+
+1. Send `POST https://api.x.com/2/webhooks` with `{"url":"https://YOUR-WORKER/hooks/x"}`. After X verifies the URL, copy the webhook ID from the response. [Webhook registration](https://docs.x.com/x-api/webhooks/quickstart)
+2. Send `POST https://api.x.com/2/activity/subscriptions` with `{"event_type":"post.create","filter":{"user_id":"NUMERIC_X_USER_ID"},"webhook_id":"WEBHOOK_ID"}`. To also receive deletions, create a second subscription with `post.delete`. [Activity subscriptions](https://docs.x.com/x-api/activity/quickstart)
+
+Publish a post on the subscribed public account to check delivery. MuseKnock forwards the Post ID, URL, and up to 4,000 characters of text for new posts. MCP filters use `post_create` and `post_delete`. Repeated deliveries with the same X event ID count once within seven days.
+
+## Connect Bluesky
+
+After selecting a Muse chat, open the Worker's **Settings → Variables and Secrets**. Enable either or both sources below and deploy the changes. The Worker reads the official APIs every five minutes.
+
+| What to receive | Worker settings | Source in Muse |
+| --- | --- | --- |
+| One account's new public posts and replies | Set `BLUESKY_DID` to its DID. To find it, replace `bsky.app` with the account's handle in the [profile lookup](https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=bsky.app) and copy `did`. No login is required. | `bluesky` |
+| Notifications for your own Bluesky-hosted account, including mentions, likes and follows | Set `BLUESKY_IDENTIFIER` to your handle. Generate a dedicated app password with direct message access disabled and save it as the Worker secret `BLUESKY_APP_PASSWORD`. [Bluesky app passwords](https://bsky.app/settings/app-passwords) | `bluesky-notifications` |
+
+The first successful poll for each account establishes where to start. To test delivery, wait for that poll, then publish a new post or have someone mention your account. Check the selected side chat after the next poll. Each source reads up to ten entries per poll and continues through a backlog on later runs. Reading notifications leaves their read status unchanged. [Author feed](https://github.com/bluesky-social/bsky/blob/main/lexicons/app/bsky/feed/getAuthorFeed.json) · [Account notifications](https://github.com/bluesky-social/bsky/blob/main/lexicons/app/bsky/notification/listNotifications.json)
 
 ## Change the destination
 

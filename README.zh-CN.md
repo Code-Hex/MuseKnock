@@ -31,7 +31,7 @@ MuseKnock 通过 Cloudflare Workers 把 Webhook 通知发送到已有的 Muse �
 2. “将现有会话 `已有会话ID` 注册为‘构建通知’，并设为通知目标。”请使用设备原来的 `--session-id`，或旧部署中的 `MUSE_SESSION_ID`。`register_side_chat` 保存的是 MuseKnock 中的名称。使用陌生的 ID，首次投递时可能会创建新对话。[Gadget SDK 侧边对话说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “发送一条测试通知并检查回执。”Muse 使用新的 UUID 作为 `requestId` 调用 `send_test_notification`，然后用返回的回执 ID 调用 `get_delivery_status`。当状态为 `sent` 时，打开所选对话查看消息。重试同一次测试时，请使用相同的请求 ID。
 
-**4. 连接事件来源。** 如需接入 Slack、LINE、Twilio、Telegram 或企业微信，请参阅[直接连接服务](#直接连接服务)。支持自定义 Bearer 请求头的服务可以使用下面的通用 Webhook。
+**4. 连接事件来源。** 如需接入 Slack、LINE、Twilio、Telegram、企业微信、GitHub 或 X，请参阅[直接连接服务](#直接连接服务)。Bluesky 的设置见[连接 Bluesky](#连接-bluesky)。支持自定义 Bearer 请求头的服务可以使用下面的通用 Webhook。
 
 在发送服务的 Webhook 设置中，将请求设为发往同一 Worker 的 `/hooks/default` 的 `POST`，添加 `Authorization: Bearer YOUR_HOOK_TOKEN` 和 `Content-Type: application/json`。发送 `{"message":"构建完成"}` 等正文后会收到回执 ID。之后可以在 Muse 中查看投递状态、暂停来源或筛选事件类型。
 
@@ -57,6 +57,34 @@ curl --fail-with-body "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
 ```
 
 通过 `getWebhookInfo` 确认返回的 URL，然后在与机器人的私聊中发送消息。MuseKnock 接收消息、频道帖子及其编辑，并转发其中的文本或媒体说明。消息出现在选定的 Muse 侧边对话中即表示投递成功。任何能给该机器人发消息的人都能触发通知。
+
+### GitHub 仓库事件
+
+1. 生成随机密钥，保存到 Worker 的 `GITHUB_WEBHOOK_SECRET`。在目标仓库打开 **Settings → Webhooks → Add webhook**，将 Payload URL 设为 `https://YOUR-WORKER/hooks/github`，Content type 选 `application/json`，在 Secret 中填入相同密钥，并启用 SSL 验证。
+2. 在 **Let me select individual events** 中按需选择 `push`、`issues`、`pull_request`、`release` 和 `workflow_run`，然后启用 Webhook。Worker 验证 GitHub 的 SHA-256 签名。首次 `ping` 仅用于确认连接，触发所选事件后即可在对话中看到摘要。[创建仓库 Webhook](https://docs.github.com/zh/webhooks/using-webhooks/creating-webhooks)
+3. 如果通知未送达，请检查 **Recent Deliveries**。GitHub 不会自动重试失败的投递。Worker 每次最多接收 512 KiB，每个来源每分钟最多接收 10 个新事件。遇到 `429` 时，等待一分钟后点击 **Redeliver**。七天内重复投递相同正文只会产生一条通知。[处理失败的投递](https://docs.github.com/zh/webhooks/testing-and-troubleshooting-webhooks/handling-failed-webhook-deliveries)
+
+### X 公开帖子
+
+准备一个已获批准且可以使用 X Activity API 的开发者应用，将其 OAuth 2.0 **Client Secret** 保存为 Worker 的 `X_OAUTH2_CLIENT_SECRET`。Worker 用它响应注册时的验证请求（CRC）并验证投递签名。X 按实际投递的帖子事件收费，包括删除事件。[X Activity API](https://docs.x.com/x-api/activity/introduction)
+
+使用应用级 Bearer Token 调用以下两个 X API。请求头使用 `Authorization: Bearer YOUR_APP_BEARER_TOKEN` 和 `Content-Type: application/json`。
+
+1. 向 `POST https://api.x.com/2/webhooks` 发送 `{"url":"https://YOUR-WORKER/hooks/x"}`。X 验证 URL 后，从响应中复制 Webhook ID。[注册 Webhook](https://docs.x.com/x-api/webhooks/quickstart)
+2. 向 `POST https://api.x.com/2/activity/subscriptions` 发送 `{"event_type":"post.create","filter":{"user_id":"NUMERIC_X_USER_ID"},"webhook_id":"WEBHOOK_ID"}`。如需接收删除通知，再用 `post.delete` 创建一条订阅。[订阅事件](https://docs.x.com/x-api/activity/quickstart)
+
+在订阅的公开账号发布帖子，确认消息已送达侧边对话。对于新帖子，MuseKnock 转发帖子 ID、URL 和正文的前 4,000 个字符。MCP 的筛选类型为 `post_create` 和 `post_delete`。七天内重复投递同一 X 事件 ID 只会产生一条通知。
+
+## 连接 Bluesky
+
+选好 Muse 目标对话后，打开 Worker 的 **Settings → Variables and Secrets**。按需启用下列一种或两种来源并部署更改。Worker 每五分钟读取一次官方 API。
+
+| 接收内容 | Worker 设置 | Muse 中的来源名称 |
+| --- | --- | --- |
+| 指定账号的新公开帖子和回复 | 将该账号的 DID 填入 `BLUESKY_DID`。在[查询个人资料](https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=bsky.app)的 URL 中将末尾的 `bsky.app` 替换为目标账号的用户名，复制结果中的 `did`。无需登录。 | `bluesky` |
+| 自己在 Bluesky 托管的账号收到的提及、点赞、关注等通知 | 将自己的用户名填入 `BLUESKY_IDENTIFIER`。生成一个不允许访问私信的专用应用密码，并保存为 Worker Secret `BLUESKY_APP_PASSWORD`。[创建应用密码](https://bsky.app/settings/app-passwords) | `bluesky-notifications` |
+
+每个账号首次成功获取数据时只记录起点。此后发布新帖或让其他账号提及你，下一次轮询后在所选 Muse 侧边对话中确认。每次轮询每个来源最多读取十条，积压的内容会在后续轮询中继续读取。读取通知不会修改其在 Bluesky 的已读状态。[公开帖子 API](https://github.com/bluesky-social/bsky/blob/main/lexicons/app/bsky/feed/getAuthorFeed.json) · [账号通知 API](https://github.com/bluesky-social/bsky/blob/main/lexicons/app/bsky/notification/listNotifications.json)
 
 ## 切换目标对话
 

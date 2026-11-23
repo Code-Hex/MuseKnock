@@ -10,6 +10,8 @@ export type WorkerEnv = {
     HOOK_TOKEN: string
     MCP_TOKEN: string
     MCP_ADMIN_TOKEN: string
+    GITHUB_WEBHOOK_SECRET?: string
+    X_OAUTH2_CLIENT_SECRET?: string
     SLACK_SIGNING_SECRET?: string
     LINE_CHANNEL_SECRET?: string
     TWILIO_AUTH_TOKEN?: string

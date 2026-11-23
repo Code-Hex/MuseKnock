@@ -3,11 +3,13 @@ import { bearerAuth } from 'hono/bearer-auth'
 import { timingSafeEqual } from 'hono/utils/buffer'
 import { handleMcp } from './mcp.ts'
 import { registerProvider } from './provider.ts'
+import { github } from './providers/github.ts'
 import { line } from './providers/line.ts'
 import { slack } from './providers/slack.ts'
 import { telegram } from './providers/telegram.ts'
 import { twilio } from './providers/twilio.ts'
 import { wecom } from './providers/wecom.ts'
+import { x } from './providers/x.ts'
 import { inbox, registerWebhook, type WorkerEnv } from './webhook.ts'
 
 export { Inbox } from './inbox.ts'
@@ -25,11 +27,13 @@ const checkTokenRoles: MiddlewareHandler<WorkerEnv> = async (c, next) => {
   return next()
 }
 
+registerProvider(app, 'github', github)
 registerProvider(app, 'line', line)
 registerProvider(app, 'slack', slack)
 registerProvider(app, 'telegram', telegram)
 registerProvider(app, 'twilio', twilio)
 registerProvider(app, 'wecom', wecom, ['GET', 'POST'])
+registerProvider(app, 'x', x, ['GET', 'POST'])
 
 registerWebhook(app, 'default', [
   checkTokenRoles,
@@ -52,4 +56,11 @@ mcp.use(
 mcp.all('/', (c) => handleMcp(c.req.raw, inbox(c.env), c.get('canWrite')))
 app.route('/mcp', mcp)
 
-export default app
+export default {
+  fetch: app.fetch,
+  async scheduled(_controller: ScheduledController, env: WorkerEnv['Bindings']) {
+    if (env.BLUESKY_DID || env.BLUESKY_IDENTIFIER || env.BLUESKY_APP_PASSWORD) {
+      await inbox(env).pollBlueskySources()
+    }
+  },
+} satisfies ExportedHandler<WorkerEnv['Bindings']>

@@ -31,7 +31,7 @@ Cloudflare と GitHub のアカウント、認証済みの Muse 端末情報、�
 2. 「既存のセッション `既存のセッションID` を『ビルド通知』として登録し、通知先にして」。ID にはガジェットの `--session-id`、または旧環境の `MUSE_SESSION_ID` の正確な値を使います。`register_side_chat` が登録する名前は MuseKnock 内のものです。未知の ID を使うと初回の投稿で新しいチャットが作られる場合があります。[Gadget SDK のサイドチャット](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. 「テスト通知を1件送り、配信状態を確認して」。Muse は新しい UUID を `requestId` として `send_test_notification` を呼び、返った受付 ID を `get_delivery_status` に渡します。`sent` になったら選んだチャットを開きます。同じテストを再試行するときは同じリクエスト ID を使います。
 
-**4. 送信元サービスを接続します。** Slack、LINE、Twilio、Telegram、企業微信には[サービス別の設定手順](#サービスを直接接続する)を使います。Bearer ヘッダーを指定できる送信元には、次の汎用 Webhook が使えます。
+**4. 送信元サービスを接続します。** Slack、LINE、Twilio、Telegram、企業微信、GitHub、X には[サービス別の設定手順](#サービスを直接接続する)を使います。Bluesky は [Bluesky を接続する](#bluesky-を接続する)を参照してください。Bearer ヘッダーを指定できる送信元には、次の汎用 Webhook が使えます。
 
 送信元の Webhook 設定で、同じ Worker の `/hooks/default` に `POST` を指定します。ヘッダーを `Authorization: Bearer YOUR_HOOK_TOKEN`、`Content-Type: application/json` とし、例えば `{"message":"ビルドが完了しました"}` を送ると受付 ID が返ります。以降は Muse から配信状態の確認、通知元の一時停止、イベント種別の絞り込みができます。
 
@@ -57,6 +57,34 @@ curl --fail-with-body "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
 ```
 
 `getWebhookInfo` で登録した URL が返ったら、Bot との個人チャットにメッセージを送ります。通常のメッセージ、チャンネル投稿、これらの編集を受け付け、テキストやキャプションがあれば転送します。選択した Muse サイドチャットに届けば、配信まで確認できています。この Bot にメッセージを送れる人は誰でも通知を発生させられます。
+
+### GitHub のリポジトリイベント
+
+1. ランダムなシークレットを生成し、Worker の `GITHUB_WEBHOOK_SECRET` に保存します。対象リポジトリで **Settings → Webhooks → Add webhook** を開き、Payload URL に `https://YOUR-WORKER/hooks/github`、Content type に `application/json`、Secret に同じ値を設定します。SSL 検証は有効にします。
+2. **Let me select individual events** で `push`、`issues`、`pull_request`、`release`、`workflow_run` から必要なイベントを選び、有効化します。Worker は GitHub の SHA-256 署名を検証します。登録時の `ping` は接続確認のみで、選択したイベントが発生するとチャットに概要が届きます。[GitHub の Webhook 作成手順](https://docs.github.com/ja/webhooks/using-webhooks/creating-webhooks)
+3. 届かない場合は **Recent Deliveries** を開きます。GitHub は失敗した配信を自動再送しません。Worker の上限はリクエスト本文が 512 KiB、送信元ごとの新規イベントが毎分 10 件です。`429` の場合は 1 分待ち、**Redeliver** を押します。7 日以内に同じ本文を再送しても、通知は重複しません。[失敗した配信の処理](https://docs.github.com/ja/webhooks/testing-and-troubleshooting-webhooks/handling-failed-webhook-deliveries)
+
+### X の公開投稿
+
+X Activity API を利用できる承認済みの開発者アプリを用意します。OAuth 2.0 の **Client Secret** を Worker の `X_OAUTH2_CLIENT_SECRET` に保存します。Worker はこの値で登録時のチャレンジ（CRC）に応答し、配信の署名を検証します。X は削除を含む投稿イベントの配信ごとに課金します。[X Activity API](https://docs.x.com/x-api/activity/introduction)
+
+次の 2 回の X API 呼び出しにはアプリ専用 Bearer Token を使います。ヘッダーを `Authorization: Bearer YOUR_APP_BEARER_TOKEN` と `Content-Type: application/json` にして JSON を送信します。
+
+1. `POST https://api.x.com/2/webhooks` に `{"url":"https://YOUR-WORKER/hooks/x"}` を送ります。X が接続を確認したら、応答から Webhook ID を控えます。[Webhook の登録](https://docs.x.com/x-api/webhooks/quickstart)
+2. `POST https://api.x.com/2/activity/subscriptions` に `{"event_type":"post.create","filter":{"user_id":"NUMERIC_X_USER_ID"},"webhook_id":"WEBHOOK_ID"}` を送ります。削除通知も必要なら、`post.delete` でもう一件登録します。[イベント購読の設定](https://docs.x.com/x-api/activity/quickstart)
+
+対象の公開アカウントで投稿し、サイドチャットへの配信を確認します。新しい投稿は投稿 ID、URL、本文の先頭 4,000 文字までを転送します。MCP の絞り込みには `post_create` と `post_delete` を使います。同じ X イベント ID の再送は 7 日間重複排除されます。
+
+## Bluesky を接続する
+
+Muse の投稿先を選んだら、Worker の **Settings → Variables and Secrets** を開きます。以下の片方または両方を設定してデプロイすると、Worker が5分おきに公式 API を読み取ります。
+
+| 受け取る内容 | Worker に設定する値 | Muse での送信元名 |
+| --- | --- | --- |
+| 指定アカウントの新しい公開投稿と返信 | `BLUESKY_DID` に対象の DID を設定します。[プロフィール照会](https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=bsky.app) の URL 末尾の `bsky.app` を対象のハンドルに置き換え、結果から `did` をコピーできます。ログインは不要です。 | `bluesky` |
+| Bluesky がホストする自分のアカウントへのメンション、いいね、フォローなど | `BLUESKY_IDENTIFIER` に自分のハンドルを設定します。DM へのアクセスを無効にした専用のアプリパスワードを作成し、Worker の Secret `BLUESKY_APP_PASSWORD` に保存します。[アプリパスワードの作成](https://bsky.app/settings/app-passwords) | `bluesky-notifications` |
+
+各アカウントの初回取得で開始位置を記録します。動作確認はその後に、新しく公開投稿するか、別のアカウントからメンションを送ってください。次の取得後に選択したサイドチャットで確認できます。1回に取得するのは各送信元につき最大10件で、続きは次回以降に取得します。通知を取得しても Bluesky 上の既読状態は変わりません。[公開投稿の API](https://github.com/bluesky-social/bsky/blob/main/lexicons/app/bsky/feed/getAuthorFeed.json) · [アカウント通知の API](https://github.com/bluesky-social/bsky/blob/main/lexicons/app/bsky/notification/listNotifications.json)
 
 ## 投稿先を切り替える
 

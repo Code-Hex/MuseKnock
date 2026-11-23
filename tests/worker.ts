@@ -21,6 +21,7 @@ export async function startWorker(
       compatibilityDate: '2026-11-19',
       host: '127.0.0.1',
       port: 0,
+      unsafeTriggerHandlers: true,
       cf: false,
       durableObjects: { INBOX: { className: 'Inbox', useSQLite: true } },
       outboundService: outbound,
