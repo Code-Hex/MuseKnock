@@ -26,7 +26,15 @@ flowchart LR
 
 ## 快速开始
 
-请准备 Cloudflare 和 GitHub 账户、已有 Muse 侧边对话的会话 ID，以及 Muse Gadget SDK 令牌（`MUSE_SDK_TOKEN`）。该令牌仅供个人非商业用途。[申请 SDK 令牌](https://gadgets.muse.ai/settings/sdk-tokens) · [使用条款](https://gadgets.muse.ai/sdk-terms)
+如果 Muse 已连接 Cloudflare，请在要接收通知的侧边对话中发送以下请求。
+
+> 请用我的 Cloudflare 连接器设置 https://github.com/Code-Hex/MuseKnock ，将此对话设为通知目标。请告诉我需要填写哪些密钥、注册哪个连接器，准备好后给我浏览器设置链接。
+
+Muse 会在连接器的权限范围内准备 Worker。按 Muse 的提示完成步骤 1 和 2 中需要本人操作的部分，在 Cloudflare 或 Muse 指定的字段中填写密钥。打开步骤 3 的链接，确认是自己的 Worker 地址，再完成身份验证。
+
+如果浏览器授权失败，可以[使用 Mac 和 iPhone 上的 Muse 应用通过蓝牙配对同一个 Worker](docs/operations.zh-CN.md#首次授权设备)。配对后按步骤 4 注册目标对话并确认收到测试通知。
+
+请准备 Cloudflare 和 GitHub 账户、要接收通知的 Muse 侧边对话，以及 Muse Gadget SDK 令牌（`MUSE_SDK_TOKEN`）。该令牌仅供个人非商业用途。[申请 SDK 令牌](https://gadgets.muse.ai/settings/sdk-tokens) · [使用条款](https://gadgets.muse.ai/sdk-terms)
 
 **1. 部署到 Cloudflare。** 选择 Worker 名称并填写以下三项 Secret。管理令牌和加密密钥分别生成，保存在密码管理器中，并记下部署后的 HTTPS 地址。
 
@@ -39,6 +47,9 @@ flowchart LR
 **2. 连接 Muse。** 在 Muse 的 **Settings → Connectors** 中添加一个自定义连接器。在已部署 Worker 的 URL 后加上 `/mcp`，选择 Bearer 身份验证，将 `MCP_ADMIN_TOKEN` 填入令牌栏。[Muse 连接器指南](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
 **3. 在接收通知的 Muse 侧边对话中请求 MuseKnock 浏览器设置链接。** Muse 将该对话的会话 ID 作为必填的 `sessionId` 参数传给 `create_browser_setup_link`。若 Muse 无法取得 ID，请提供侧边对话的网址。认证成功后，Worker 会验证并注册该对话，然后发送完成通知。链接有效期十分钟且只能使用一次。打开后输入 Muse 邮箱或电话号码，并完成密码和验证码步骤。Worker 申请 Gadget 凭据并加密保存刷新令牌。若对话自动注册失败，请在第 4 步手动注册。若要重新认证已配对的 Worker，请先按下方步骤重置，再申请新链接。
+
+<details>
+<summary>仅重新授权时使用：重置已保存的配对</summary>
 
 要清除已保存的 Gadget 配对并重新设置，请在本地终端运行以下命令，并在提示时输入 Muse 管理连接器使用的同一个 `MCP_ADMIN_TOKEN`：
 
@@ -57,6 +68,8 @@ unset MUSEKNOCK_ADMIN_TOKEN
 ```
 
 成功时返回无正文的 `204`，不会生成链接。待发送通知会停止，原通知目标也会清除。请 Muse 生成新链接；认证成功后会注册通过 `sessionId` 提供的对话。不要把管理令牌放进 URL 或聊天。
+
+</details>
 
 此浏览器流程使用 Muse 的非公开认证 API。如果 Muse 更改接口或要求额外的账户验证，请使用[蓝牙授权步骤](docs/operations.zh-CN.md#首次授权设备)。Worker 通过 HTTPS 将密码和验证码发送给 Muse，但不持久保存。拿到设置链接的人在有效期内可以使用它，请勿分享。
 

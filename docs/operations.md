@@ -4,7 +4,14 @@
 
 ## Authorize a device
 
-Open `Pair MuseKnock.command` on a Bluetooth-enabled Mac and authorize it from Muse on your phone. uv installs the macOS Bluetooth bindings and the pinned Muse Gadget SDK. Follow the [quick start](../README.md#quick-start).
+For first-time setup, ask Muse to use the Cloudflare connector from the destination side chat. [Setup request and browser authorization](../README.md#quick-start)
+
+**If browser authorization fails**, authorize the deployed Worker over Bluetooth.
+
+1. On a Bluetooth-enabled Mac with Node.js 22.12 or later and uv installed, open `Pair MuseKnock.command` from the downloaded repository. Enter the same Worker URL, admin token and Gadget SDK token on the local pairing page, then select **Start pairing**.
+2. Using a BLE reader such as nRF Connect on your iPhone, connect to the gadget shown on the Mac. Open the indicated service and characteristic and send the displayed verification value using **Write with response**. Disconnect the reader once the Mac shows **Phone verified**.
+3. In the Muse iPhone app, open **Settings → Devices** and enable **Allow community devices**. Under **Add Device → Muse Gadget**, select the same gadget, then choose **Use current connection** from the Wi-Fi list.
+4. When the Mac shows **Pairing complete**, ask Muse for a settings link. Register and select the destination side chat, then confirm a test notification arrives there.
 
 If you already have a valid pairing for this Worker, you can use the Cloudflare dashboard. Under **Settings → Variables and Secrets**, add its matching `MUSE_NODE_ID`, `MUSE_SDK_TOKEN` and `MUSE_REFRESH_TOKEN` as secrets and deploy them together. Call `begin_muse_pairing` through the admin connector. When it returns `configured`, continue with side chat registration.
 

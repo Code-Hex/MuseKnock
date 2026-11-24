@@ -4,7 +4,14 @@
 
 ## 首次授权设备
 
-在支持蓝牙的 Mac 上打开 `Pair MuseKnock.command`，然后在手机上的 Muse 中授权。uv 会安装 macOS 蓝牙绑定和固定版本的 Muse Gadget SDK。操作步骤见[快速开始](../README.zh-CN.md#快速开始)。
+首次设置时，请在目标侧边对话中让 Muse 使用 Cloudflare 连接器完成准备工作。[请求示例和浏览器授权步骤](../README.zh-CN.md#快速开始)
+
+**如果浏览器授权失败**，请通过蓝牙授权已部署的 Worker。
+
+1. 在支持蓝牙的 Mac 上安装 Node.js 22.12 或更高版本和 uv，打开下载的仓库中的 `Pair MuseKnock.command`。在本地配对页面输入同一个 Worker 的网址、管理令牌和 Gadget SDK 令牌，选择 **Start pairing**。
+2. 在 iPhone 上使用 nRF Connect 等 BLE 读取工具连接 Mac 显示的 Gadget。打开指定的服务和特征，通过 **Write with response** 写入页面显示的一次性验证值。Mac 显示 **Phone verified** 后断开读取工具的连接。
+3. 在 iPhone 上打开 Muse 的 **Settings → Devices**，启用 **Allow community devices**。在 **Add Device → Muse Gadget** 中选择同一个 Gadget，然后在 Wi-Fi 列表中选择 **Use current connection**。
+4. Mac 显示 **Pairing complete** 后，请 Muse 生成设置链接，注册并选择目标侧边对话，确认该对话收到测试通知。
 
 如果已有供此 Worker 使用的有效配对，可在 Cloudflare 的 **Settings → Variables and Secrets** 中将同一配对的 `MUSE_NODE_ID`、`MUSE_SDK_TOKEN` 和 `MUSE_REFRESH_TOKEN` 一起设为密钥并部署。通过管理 MCP 调用 `begin_muse_pairing`，返回 `configured` 后即可注册侧边对话。
 

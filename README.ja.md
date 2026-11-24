@@ -26,7 +26,15 @@ flowchart LR
 
 ## クイックスタート
 
-Cloudflare と GitHub のアカウント、既存の Muse サイドチャットのセッション ID、Muse Gadget SDK トークン（`MUSE_SDK_TOKEN`）を用意します。トークンは個人・非商用利用向けです。[SDK トークンを発行する](https://gadgets.muse.ai/settings/sdk-tokens) · [利用条件](https://gadgets.muse.ai/sdk-terms)
+Cloudflare コネクタを接続済みの Muse では、通知を受け取りたいサイドチャットに次の依頼を貼り付けます。
+
+> https://github.com/Code-Hex/MuseKnock を Cloudflare コネクタでセットアップして。このチャットを通知先にしたいです。私が入力する Secret と登録が必要なコネクタを案内し、準備ができたらブラウザセットアップリンクを発行して。
+
+Muse はコネクタの権限で可能な範囲まで Worker の準備を進めます。手順 1・2 は、Muse から入力や操作を求められた箇所だけ行ってください。Secret は Cloudflare や Muse の指定欄に入力します。手順 3 のリンクを自分の Worker の URL で開き、本人確認を完了してください。
+
+ブラウザで Gadget 認証を完了できないときは、同じ Worker を [Mac と iPhone の Muse アプリで Bluetooth ペアリング](docs/operations.ja.md#初回の端末認証)できます。認証後は手順 4 で通知先を登録し、テスト通知を確認します。
+
+Cloudflare と GitHub のアカウント、通知を受け取る Muse サイドチャット、Muse Gadget SDK トークン（`MUSE_SDK_TOKEN`）を用意します。トークンは個人・非商用利用向けです。[SDK トークンを発行する](https://gadgets.muse.ai/settings/sdk-tokens) · [利用条件](https://gadgets.muse.ai/sdk-terms)
 
 **1. Cloudflare にデプロイします。** Worker 名を選び、次の3つを Secret として入力します。管理用トークンと暗号鍵は別々に生成し、パスワードマネージャーに保管します。デプロイ先の HTTPS URL を控えます。
 
@@ -39,6 +47,9 @@ Cloudflare と GitHub のアカウント、既存の Muse サイドチャット�
 **2. Muse にコネクタを追加します。** Muse の **Settings → Connectors** でカスタムコネクタを1つ追加します。デプロイ先の URL の末尾に `/mcp` を付け、認証方式に Bearer を選び、トークン欄に `MCP_ADMIN_TOKEN` を入力します。[Muse コネクタの設定手順](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
 **3. 通知を受け取りたい Muse サイドチャットで「このチャットを通知先にして、MuseKnock のブラウザセットアップリンクを発行して」と頼みます。** Muse はそのチャットのセッション ID を `create_browser_setup_link` の `sessionId` 引数で Worker に送ります。Muse が ID を取得できない場合は、サイドチャットの URL を伝えてください。Worker は認証完了時にチャットを確認して通知先に登録し、完了通知を送ります。リンクは10分間有効な1回限りの URL です。開いたページに Muse のメールアドレスまたは電話番号を入力し、案内されたパスワード、SMS コードなどを入力します。Worker は Gadget のトークンを発行して暗号化保存します。チャットの自動登録に失敗した場合は手順4で登録します。再設定する場合は、下のリセット手順を実行してから新しいリンクを発行します。
+
+<details>
+<summary>再設定時のみ：保存済みのペアリングをリセットする</summary>
 
 保存済みの Gadget 認証を消して最初から設定し直す場合は、手元のターミナルで次を実行します。Muse の管理コネクタに登録した `MCP_ADMIN_TOKEN` を、表示されない入力欄に入れます。トークンは URL やチャットに貼らず、`Authorization` ヘッダーで送ります。
 
@@ -57,6 +68,8 @@ unset MUSEKNOCK_ADMIN_TOKEN
 ```
 
 成功時は本文なしの `204` が返ります。リンクは発行されません。未配信通知は停止し、以前の投稿先も消えます。続けて Muse に新しいセットアップリンクを依頼すると、渡した `sessionId` のチャットが認証完了時に登録されます。
+
+</details>
 
 このブラウザ方式は Muse の非公開認証 API を利用します。Muse の変更や追加の本人確認によって完了できない場合は、[Bluetooth を使う認証手順](docs/operations.ja.md#初回の端末認証)を使ってください。入力したパスワードと確認コードは Worker から Muse に HTTPS で送られ、Worker の保存領域には残しません。セットアップ URL は開いた人が利用できるため、他人に共有しないでください。
 

@@ -26,7 +26,15 @@ flowchart LR
 
 ## Quick start
 
-Prepare your Cloudflare and GitHub accounts, an existing Muse side chat and its session ID, and your Muse Gadget SDK token (`MUSE_SDK_TOKEN`). The token is for personal, non-commercial use. [Issue an SDK token](https://gadgets.muse.ai/settings/sdk-tokens) · [SDK token terms](https://gadgets.muse.ai/sdk-terms)
+If Muse is connected to Cloudflare, paste this request into the side chat where you want notifications.
+
+> Set up https://github.com/Code-Hex/MuseKnock using my Cloudflare connector. Use this chat for notifications. Tell me which secrets to enter and which connector to register, then give me the browser setup link.
+
+Muse can prepare the Worker up to the permissions granted to the connector. Complete the parts of steps 1 and 2 that Muse asks you to handle. Enter secrets in the designated Cloudflare or Muse fields. Open the link from step 3 on your own Worker URL and complete the identity check yourself.
+
+If browser authorization fails, [pair the same Worker over Bluetooth using a Mac and the Muse iPhone app](docs/operations.md#authorize-a-device). Then follow step 4 to register the destination and check a test notification.
+
+Prepare your Cloudflare and GitHub accounts, the Muse side chat where you want notifications, and your Muse Gadget SDK token (`MUSE_SDK_TOKEN`). The token is for personal, non-commercial use. [Issue an SDK token](https://gadgets.muse.ai/settings/sdk-tokens) · [SDK token terms](https://gadgets.muse.ai/sdk-terms)
 
 **1. Deploy to Cloudflare.** Choose a Worker name and supply these three secrets. Generate the admin token and encryption key separately, keep them in your password manager, then copy the deployed Worker’s HTTPS URL.
 
@@ -39,6 +47,9 @@ Prepare your Cloudflare and GitHub accounts, an existing Muse side chat and its 
 **2. Connect Muse.** In Muse **Settings → Connectors**, add one custom connector. Append `/mcp` to the deployed Worker URL, choose Bearer authentication, and enter `MCP_ADMIN_TOKEN` in the token field. [Muse connector guide](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
 **3. Ask Muse for a MuseKnock browser setup link in the side chat where you want notifications.** Muse passes that chat's session ID as the required `sessionId` argument to `create_browser_setup_link`. If Muse cannot obtain the ID, provide the side chat URL. On successful authorization, the Worker verifies and registers the chat, then sends a completion notification. The one-use URL is valid for ten minutes. Open it, enter your Muse email address or phone number, and complete the password and code prompts. The Worker mints Gadget credentials and stores the refresh token encrypted. If automatic chat registration fails, register the destination in step 4. To reauthorize a paired Worker, reset it using the procedure below, then request a new link.
+
+<details>
+<summary>Reauthorization only: reset a saved pairing</summary>
 
 To clear the stored Gadget pairing and start setup again, run this locally. Enter the same `MCP_ADMIN_TOKEN` used by the Muse admin connector when prompted:
 
@@ -57,6 +68,8 @@ unset MUSEKNOCK_ADMIN_TOKEN
 ```
 
 A successful reset returns an empty `204` response and issues no link. Pending notifications stop and the previous destination is cleared. Ask Muse for a new setup link; the chat passed as `sessionId` is registered after authorization. Keep the admin token out of URLs and chats.
+
+</details>
 
 This browser flow uses Muse's private authentication API. If Muse changes it or requires additional account checks, use the [Bluetooth authorization procedure](docs/operations.md#authorize-a-device). The Worker sends your password and verification code to Muse over HTTPS and does not persist them. Anyone with the setup link can use it until it expires, so keep it private.
 

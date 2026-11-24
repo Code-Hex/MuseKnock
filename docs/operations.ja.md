@@ -4,7 +4,14 @@
 
 ## 初回の端末認証
 
-Bluetooth 対応の Mac で `Pair MuseKnock.command` を開き、スマホの Muse で認可します。uv が macOS の Bluetooth バインディングとバージョン固定の Muse Gadget SDK を用意します。操作は[クイックスタート](../README.ja.md#クイックスタート)を参照してください。
+初回は、通知先のサイドチャットで Cloudflare コネクタを使ったセットアップを Muse に依頼します。[依頼文とブラウザ認証の手順](../README.ja.md#クイックスタート)
+
+**ブラウザで Gadget 認証を完了できない場合**は、デプロイ済みの Worker を次の手順で認可します。
+
+1. Bluetooth 対応の Mac に Node.js 22.12 以降と uv を用意し、ダウンロードしたリポジトリの `Pair MuseKnock.command` を開きます。Mac に開いたペアリング画面に同じ Worker の URL、管理トークン、Gadget SDK トークンを入力し、**Start pairing** を押します。
+2. iPhone の BLE リーダー（例：nRF Connect）で画面に表示された Gadget に接続します。指定のサービスと特性を開き、**Write with response** で画面の確認値を書き込みます。Mac に **Phone verified** と表示されたらリーダーを切断します。
+3. iPhone の Muse アプリで **Settings → Devices** を開き、**Allow community devices** を有効にします。**Add Device → Muse Gadget** から同じ Gadget を選び、Wi-Fi 一覧で **Use current connection** を選びます。
+4. Mac に **Pairing complete** と表示されたら、Muse に設定リンクを依頼し、通知先のサイドチャットを登録・選択します。そのチャットにテスト通知が届けば完了です。
 
 この Worker に使う有効なペアリング情報がすでに揃っている場合は、Cloudflare の **Settings → Variables and Secrets** で、同じペアリングの `MUSE_NODE_ID`、`MUSE_SDK_TOKEN`、`MUSE_REFRESH_TOKEN` をシークレットとしてまとめて設定し、デプロイします。管理用 MCP で `begin_muse_pairing` が `configured` を返したら、サイドチャットの登録に進めます。
 
