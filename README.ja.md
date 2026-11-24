@@ -26,7 +26,7 @@ flowchart LR
 
 ## クイックスタート
 
-Cloudflare アカウントを持ち、Muse と Cloudflare コネクタを連携済みなら、以下の GitHub URL を Muse に渡すだけでセットアップを始められます。通知を受け取りたいサイドチャットに、この依頼を貼り付けてください。
+Cloudflare コネクタを接続済みの Muse では、通知を受け取りたいサイドチャットに次の依頼を貼り付けます。
 
 > https://github.com/Code-Hex/MuseKnock を Cloudflare コネクタでセットアップして。このチャットを通知先にしたいです。私が入力する Secret と登録が必要なコネクタを案内し、準備ができたらブラウザセットアップリンクを発行して。
 

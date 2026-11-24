@@ -26,7 +26,7 @@ flowchart LR
 
 ## 快速开始
 
-如果你有 Cloudflare 账户，并且已将 Cloudflare 连接器与 Muse 关联，只需把下方 GitHub 地址发给 Muse，就可以开始设置。请在要接收通知的侧边对话中发送以下请求。
+如果 Muse 已连接 Cloudflare，请在要接收通知的侧边对话中发送以下请求。
 
 > 请用我的 Cloudflare 连接器设置 https://github.com/Code-Hex/MuseKnock ，将此对话设为通知目标。请告诉我需要填写哪些密钥、注册哪个连接器，准备好后给我浏览器设置链接。
 

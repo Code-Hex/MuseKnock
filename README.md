@@ -26,7 +26,7 @@ flowchart LR
 
 ## Quick start
 
-If you have a Cloudflare account and its connector is linked to Muse, give Muse the GitHub URL below to start setup. Paste this request into the side chat where you want notifications.
+If Muse is connected to Cloudflare, paste this request into the side chat where you want notifications.
 
 > Set up https://github.com/Code-Hex/MuseKnock using my Cloudflare connector. Use this chat for notifications. Tell me which secrets to enter and which connector to register, then give me the browser setup link.
 
