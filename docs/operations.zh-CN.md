@@ -19,8 +19,6 @@
 
 Worker 会先向 Muse 刷新授权命令提交的凭据，再启用配对。对于已保存的配对，`begin_muse_pairing` 返回上次刷新结果。`unverified` 表示尚未验证，`verified` 表示刷新成功，`rejected` 表示 Muse 拒绝了凭据。
 
-如果上传配对信息后未收到确认，Mac 会核对 Worker 保存的配对。写入失败时，Worker 会重试保存新令牌。如果 Worker 在写入持久存储前停止，而 Muse 已使旧令牌失效，请使用 `--replace` 重新授权。
-
 ## 排查未收到的通知
 
 请 Muse 按回执 ID 查询投递状态。即使尚未配置连接器，也可以用原来的 `Idempotency-Key` 重发 Webhook，查看该通知的状态。
@@ -66,32 +64,12 @@ Worker 使用标准设备 API `api.muse.ai` 和加密的 Link 网关 `hatch.meta
 
 每个来源在滚动的 60 秒内最多提交 10 个新事件。超出限制时返回 HTTP `429` 和 `Retry-After: 60`。所有来源合计每 60 秒最多获得 3 次投递许可，同时只处理一条。重试也占用配额。自收到事件起，去重和回执查询的有效期为 7 天。下次访问存储时会更新过期状态并删除旧记录。限额定义在 `src/store.ts` 中。
 
-## 添加来源或正文格式
-
-在 `src/index.ts` 中向 `registerWebhook` 传入来源名称、包含认证逻辑的 Hono 中间件数组，以及读取正文的函数。例如，要从 CI 通知中仅提取作业名称，请在 `WorkerEnv` 的 `Bindings` 中加入 `CI_HOOK_TOKEN`，将其设为独立的随机 Worker 密钥，再注册以下路由。
-
-```ts
-import { HTTPException } from 'hono/http-exception'
-import { z } from 'zod'
-
-const build = z.object({ job: z.string().min(1).max(128) })
-
-registerWebhook(app, 'ci', [
-  bearerAuth({ verifyToken: (token, c) => matches(token, c.env.CI_HOOK_TOKEN) }),
-], async request => {
-  const result = build.safeParse(await request.json().catch(() => null))
-  if (!result.success) throw new HTTPException(400, { message: 'Expected a job name' })
-  return result.data.job
-})
-```
-
-重新部署后即可向 `POST /v1/hooks/ci` 发送通知。验证来源签名时，请在中间件中读取 `c.req.raw.clone()`，然后再解码正文。你可以在认证后添加限流或过滤逻辑。Durable Object 会对所有区域执行同一投递上限。[Hono 中间件](https://hono.dev/docs/guides/middleware) · [Durable Object 的 SQLite 存储](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
-
 ## MCP 工具
 
 | 工具 | 参数与结果 | 权限 |
 | --- | --- | --- |
 | `begin_muse_pairing` | 返回节点 ID 和登录步骤，或已保存配对的最近验证结果。授权命令在更换配对时使用 `replace: true`。 | 管理员 |
+| `create_browser_setup_link` | `sessionId`（目标侧边对话 ID）。生成十分钟内有效、只能使用一次的 Gadget 授权链接。已配对的 Worker 需要先重置。 | 管理员 |
 | `create_settings_link` | 生成一次性 `/v1/setup/settings` 链接。通过浏览器注册或选择对话，以及修改来源的暂停和过滤规则。链接和浏览器会话在十分钟后过期。 | 管理员 |
 | `get_setup_status` | 根据 Worker 中的配置返回 `deviceConfigured`、`credentialStorageReady`、`active` 和 `ready`。如果 `CIRCUIT_BREAKER` 配置无效，则返回 `ready: false` 和 `reason: invalid_circuit_breaker`。 | 只读 |
 | `send_test_notification` | `requestId`（UUID）。向当前目标对话排入一条固定内容的测试通知，返回回执。来源为 `museknock-test`，事件类型为 `test`。 | 管理 |
@@ -104,10 +82,6 @@ registerWebhook(app, 'ci', [
 设置链接是短期有效的授权 URL。不要分享链接，请确认是您自己的 Worker 地址并亲自在浏览器中提交设置。打开后页面使用 HTTP-only Cookie 和同源表单提交。注册名区分大小写，去除首尾空格后长度为 1 至 64 个字符。首位使用 Unicode 字母或数字，之后还允许组合标记、空格、英文句点、下划线和连字符。会话 ID 区分大小写，允许使用 1 至 64 个 ASCII 字母、数字或连字符。注册或切换目标时，Worker 会先向 Muse 查询会话是否存在，查询过程不会发送消息。要继续原有对话，请使用该侧边对话的会话 ID。Worker 无法加载配对信息或尚未选定目标对话时，已通过身份验证的通知请求将收到 HTTP `503`。
 
 轮换 Webhook 或 MCP 令牌时，在 Cloudflare 更新对应的 Worker 密钥并部署，再更新使用该令牌的发送端或连接器。 如果曾将 Telegram 的 Webhook 密钥用于 MCP 或通用 Webhook，请分别为两者生成新值，并通过 `setWebhook` 向 Telegram 注册新的密钥。
-
-## 验证 SDK 兼容性
-
-检出 Muse Gadget SDK 的提交 `e17081a45941415d483642dbe21c2a2e6ef85a13`，并在 Python 虚拟环境中安装其 `linux[test]` 包。将 `MUSE_PYTHON` 设为该环境的 Python 可执行文件路径，将 `MUSE_SDK_TESTS` 设为 SDK 中 `linux/tests` 目录的绝对路径。运行 `npm test` 即可使用测试凭据，在本地验证从接收 Webhook、经过 Worker 到 SDK 测试服务器收件的完整流程。
 
 ## 可选的 CLI 配置
 

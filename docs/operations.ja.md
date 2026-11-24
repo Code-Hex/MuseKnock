@@ -19,8 +19,6 @@
 
 認証コマンドから受け取った情報は、Worker が Muse でトークンを更新できてから有効にします。保存済みのペアリングでは、`begin_muse_pairing` が直近の更新結果を返します。`unverified` は未確認、`verified` は更新成功、`rejected` は Muse が認証情報を拒否したことを示します。
 
-保存応答が途切れたときは、Mac が Worker に登録されたペアリングを照合します。トークン更新後の書き込みが失敗した場合は、Worker が新しいトークンの保存を再試行します。永続化前に Worker が停止し、Muse 側でも旧トークンが失効していた場合は、`--replace` で再認可します。
-
 ## 届かない通知を調べる
 
 Muse に「受付 ID … の配信状態を調べて」と頼みます。コネクタを設定する前でも、元と同じ `Idempotency-Key` で Webhook を再送すれば状態を確認できます。
@@ -66,32 +64,12 @@ Worker は標準の端末 API `api.muse.ai` と暗号化された Link ゲート
 
 受付は送信元ごとに直近60秒で10件までです。超過時は HTTP `429` と `Retry-After: 60` を返します。配信の許可は全送信元を合わせて60秒に3回、同時に1件までです。再試行もこの枠を使います。重複判定と受付 ID の参照期間は受付から7日間です。期限の反映と履歴の削除は次のストア操作時に行います。しきい値は `src/store.ts` にあります。
 
-## 送信元と本文形式を追加する
-
-`src/index.ts` の `registerWebhook` に送信元名、認証を含む Hono ミドルウェアの配列、本文を読む関数を渡します。たとえば CI の通知からジョブ名だけを送るには、`WorkerEnv` の `Bindings` に `CI_HOOK_TOKEN` を追加して専用のランダムな値を Worker のシークレットに設定し、次のルートを登録します。
-
-```ts
-import { HTTPException } from 'hono/http-exception'
-import { z } from 'zod'
-
-const build = z.object({ job: z.string().min(1).max(128) })
-
-registerWebhook(app, 'ci', [
-  bearerAuth({ verifyToken: (token, c) => matches(token, c.env.CI_HOOK_TOKEN) }),
-], async request => {
-  const result = build.safeParse(await request.json().catch(() => null))
-  if (!result.success) throw new HTTPException(400, { message: 'Expected a job name' })
-  return result.data.job
-})
-```
-
-再デプロイ後は `POST /v1/hooks/ci` に通知できます。送信元独自の署名検証は、この配列のミドルウェアで変換前の `c.req.raw.clone()` を読みます。認証後に独自のレート制限やフィルターを追加できます。拠点共通の配信上限は Durable Object が適用します。[Hono ミドルウェア](https://hono.dev/docs/guides/middleware) · [Durable Object の SQLite](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
-
 ## MCP ツール
 
 | ツール | 引数 | 権限 |
 | --- | --- | --- |
 | `begin_muse_pairing` | ノード ID とサインイン手順、または保存済みペアリングの直近の検証結果を返します。認証コマンドは再認証時に `replace: true` を指定します。 | 管理 |
+| `create_browser_setup_link` | `sessionId`（通知先のサイドチャット ID）。1回限り、10分間有効な Gadget 認証リンクを発行します。認証済み Worker では先にリセットが必要です。 | 管理 |
 | `create_settings_link` | 1回限りの `/v1/setup/settings` リンクを発行します。ブラウザで通知先の登録・選択、通知元の停止やフィルターを設定できます。リンクと設定セッションは10分で期限切れになります。 | 管理 |
 | `get_setup_status` | Worker 内の設定から `deviceConfigured`、`credentialStorageReady`、`active`、`ready` を返します。`CIRCUIT_BREAKER` の設定が不正な場合は `ready: false` と `reason: invalid_circuit_breaker` を返します。 | 閲覧 |
 | `send_test_notification` | `requestId`（UUID）。選択中の投稿先に固定文のテスト通知を登録し、受付 ID を返します。通知元は `museknock-test`、イベント種別は `test` です。 | 管理 |
@@ -104,10 +82,6 @@ registerWebhook(app, 'ci', [
 設定リンクは短時間有効な権限付き URL です。他人に共有せず、自分の Worker の URL であることを確かめて、ブラウザで自分で設定してください。開いた後は HTTP-only Cookie と同一オリジンのフォーム送信を使います。登録名は前後の空白を除いて1〜64文字で、大文字と小文字を区別します。先頭は Unicode の文字または数字、以降は文字・数字・結合文字・半角スペース・ピリオド・アンダースコア・ハイフンを使えます。セッション ID は大文字と小文字を区別し、1〜64文字の半角英数字とハイフンが使えます。登録・切替時は投稿せずに Muse に問い合わせ、指定したセッションの存在を確認します。既存のサイドチャットのセッション ID を指定してください。ペアリングを読み込めない場合や投稿先が未設定の場合、認証済みの通知リクエストは HTTP `503` を返します。
 
 Webhook や MCP のトークンを更新するときは、Cloudflare で該当する Worker シークレットを変更してデプロイします。その値を使う送信元やコネクタにも新しいトークンを設定してください。 Telegram の受信用シークレットを MCP や汎用 Webhook にも使っていた場合は、両方を別々の新しい値に変更し、Telegram にも `setWebhook` で新しい値を登録してください。
-
-## SDK との互換性を検証する
-
-Muse Gadget SDK のコミット `e17081a45941415d483642dbe21c2a2e6ef85a13` をチェックアウトし、Python 仮想環境に `linux[test]` パッケージをインストールします。`MUSE_PYTHON` にその環境の Python 実行ファイル、`MUSE_SDK_TESTS` に SDK の `linux/tests` ディレクトリの絶対パスを指定します。`npm test` を実行すると、テスト用の認証情報で Webhook の受付から Worker 経由で SDK のテストサーバーに届くまでをローカルで検証できます。
 
 ## CLI でセットアップする場合
 

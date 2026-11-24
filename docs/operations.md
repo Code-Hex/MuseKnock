@@ -19,8 +19,6 @@ The command gets the node ID from `begin_muse_pairing` and sends the node ID, SD
 
 When the Worker imports credentials from the authorization command, it refreshes them with Muse before activating them. For a saved pairing, `begin_muse_pairing` reports the last refresh result. `unverified` means the Worker has yet to confirm the credentials. `verified` means a refresh succeeded. `rejected` means Muse refused the credentials.
 
-If the pairing upload acknowledgement is lost, the Mac checks which pairing the Worker saved. The Worker retries a failed write with the newly issued token. If the Worker stops before that token reaches durable storage and Muse has already invalidated the old token, renew the pairing with `--replace`.
-
 ## Trace a notification
 
 Ask Muse to check the delivery status for the receipt ID. You can also repeat the original webhook with the same `Idempotency-Key` before setting up the connector.
@@ -66,32 +64,12 @@ The built-in service endpoints accept request bodies up to 512 KiB. Each resulti
 
 Each source can submit 10 new events per rolling 60 seconds. Excess requests receive HTTP `429` and `Retry-After: 60`. Across all sources, the store authorizes up to three delivery attempts per rolling 60 seconds, one at a time. Retries count toward this limit. Receipt lookup and deduplication cover seven days from receipt. The next store operation applies expiry and removes old history. The limits are defined in `src/store.ts`.
 
-## Add a source or payload format
-
-In `src/index.ts`, pass a source name, an array of Hono middleware including authentication, and a body decoder to `registerWebhook`. To deliver only the job name from CI notifications, add `CI_HOOK_TOKEN` to the `WorkerEnv` bindings, add its value as a separate random Worker secret, and register this route.
-
-```ts
-import { HTTPException } from 'hono/http-exception'
-import { z } from 'zod'
-
-const build = z.object({ job: z.string().min(1).max(128) })
-
-registerWebhook(app, 'ci', [
-  bearerAuth({ verifyToken: (token, c) => matches(token, c.env.CI_HOOK_TOKEN) }),
-], async request => {
-  const result = build.safeParse(await request.json().catch(() => null))
-  if (!result.success) throw new HTTPException(400, { message: 'Expected a job name' })
-  return result.data.job
-})
-```
-
-After redeploying, send notifications to `POST /v1/hooks/ci`. To verify a source-specific signature, read `c.req.raw.clone()` in middleware before decoding the body. You can add rate limits or filters after authentication. The Durable Object enforces the shared delivery limit across locations. [Hono middleware](https://hono.dev/docs/guides/middleware) · [Durable Object SQLite storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
-
 ## MCP tools
 
 | Tool | Arguments and result | Access |
 | --- | --- | --- |
 | `begin_muse_pairing` | Returns the node ID and private sign-in steps, or the last verification result for a saved pairing. The authorization command uses `replace: true` to request replacement. | Admin |
+| `create_browser_setup_link` | `sessionId` (destination side chat ID). Issues a one-use Gadget authorization link valid for ten minutes. Reset an already paired Worker first. | Admin |
 | `create_settings_link` | Returns a one-use link to `/v1/setup/settings`. Open it in a browser to register or select chats and change source rules. The link and browser session expire after ten minutes. | Admin |
 | `get_setup_status` | Returns `deviceConfigured`, `credentialStorageReady`, `active`, and `ready` from local configuration. An invalid `CIRCUIT_BREAKER` setting returns `ready: false` and `reason: invalid_circuit_breaker`. | Read |
 | `send_test_notification` | `requestId` (UUID). Enqueues a fixed test notification for the active chat and returns its receipt. The source is `museknock-test` and the event type is `test`. | Admin |
@@ -104,10 +82,6 @@ After redeploying, send notifications to `POST /v1/hooks/ci`. To verify a source
 The settings link is a temporary capability. Keep it private, open it only on your Worker URL, and submit changes yourself in the browser. The page requires a same-origin form submission and uses an HTTP-only cookie after you open the link. Registration names are case-sensitive, with 1 to 64 characters after trimming. Start with a Unicode letter or number. You may then use letters, numbers, combining marks, spaces, periods, underscores, and hyphens. Session IDs are case-sensitive and accept 1–64 ASCII letters, digits or hyphens. Registration and selection verify that the session exists on Muse before changing the destination. Use the ID of the existing side chat. An authenticated notification returns HTTP `503` until the Worker can load the pairing and has an active destination.
 
 To rotate webhook or MCP tokens, update the corresponding Worker secrets in Cloudflare and deploy the changes. Update the sender or connector that uses each token. If your Telegram webhook secret was also used as an MCP or custom webhook token, rotate both to independent values and register the new Telegram secret with `setWebhook`.
-
-## Verify SDK compatibility
-
-With the Muse Gadget SDK checked out at `e17081a45941415d483642dbe21c2a2e6ef85a13`, install its `linux[test]` package into a Python virtual environment. Set `MUSE_PYTHON` to that environment’s Python executable and `MUSE_SDK_TESTS` to the absolute path of the checkout’s `linux/tests` directory. Running `npm test` then includes a local test from webhook receipt through the Worker to the SDK’s test server. It uses synthetic credentials.
 
 ## Optional CLI setup
 
