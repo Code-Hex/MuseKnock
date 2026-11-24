@@ -16,11 +16,16 @@ MuseKnock は Cloudflare Workers で Webhook を受け取り、既存の Muse �
 ```mermaid
 flowchart LR
     hooks["Slack · X · LINE · …"] -->|Webhook| inbox
+    feeds["Discord · Bluesky"] -->|新着| inbox
     subgraph worker["Cloudflare Worker"]
-        cron["Cron"] -->|"新着を登録"| inbox["通知キュー<br/>(Durable Object)"]
+        cron["Cron（5分ごと）"]
+        setup["セットアップ・設定ページ"]
+        inbox["通知キュー<br/>(Durable Object)"]
     end
-    cron -->|"5分ごとに取得"| feeds["Discord · Bluesky"]
-    admin["Muse の MCP コネクタ"] -.->|"投稿先を設定"| inbox
+    cron -->|取得| feeds
+    admin["Muse の MCP コネクタ"] -->|リンクを発行| setup
+    browser["ブラウザ"] -->|端末認証・投稿先設定| setup
+    setup -->|認証情報・投稿先を保存| inbox
     inbox -->|"Muse Link"| chat["既存の Muse サイドチャット"]
 ```
 

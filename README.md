@@ -16,11 +16,16 @@ MuseKnock delivers webhooks from Cloudflare Workers to an existing Muse side cha
 ```mermaid
 flowchart LR
     hooks["Slack · X · LINE · …"] -->|Webhook| inbox
+    feeds["Discord · Bluesky"] -->|New events| inbox
     subgraph worker["Cloudflare Worker"]
-        cron["Cron"] -->|"Queue new events"| inbox["Notification queue<br/>(Durable Object)"]
+        cron["Cron (every 5 min)"]
+        setup["Setup and settings pages"]
+        inbox["Notification queue<br/>(Durable Object)"]
     end
-    cron -->|"Worker polls every 5 min"| feeds["Discord · Bluesky"]
-    admin["Muse MCP connector"] -.->|"Set destination"| inbox
+    cron -->|Poll| feeds
+    admin["Muse MCP connector"] -->|Issue link| setup
+    browser["Browser"] -->|Authorize device and set destination| setup
+    setup -->|Save credentials and destination| inbox
     inbox -->|"Muse Link"| chat["Existing Muse side chat"]
 ```
 

@@ -16,11 +16,16 @@ MuseKnock 通过 Cloudflare Workers 把 Webhook 通知发送到已有的 Muse �
 ```mermaid
 flowchart LR
     hooks["Slack · X · LINE · …"] -->|Webhook| inbox
+    feeds["Discord · Bluesky"] -->|新事件| inbox
     subgraph worker["Cloudflare Worker"]
-        cron["Cron"] -->|"将新事件入队"| inbox["通知队列<br/>(Durable Object)"]
+        cron["Cron（每 5 分钟）"]
+        setup["设置与管理页面"]
+        inbox["通知队列<br/>(Durable Object)"]
     end
-    cron -->|"每 5 分钟读取"| feeds["Discord · Bluesky"]
-    admin["Muse MCP 连接器"] -.->|"设置目标对话"| inbox
+    cron -->|读取| feeds
+    admin["Muse MCP 连接器"] -->|生成链接| setup
+    browser["浏览器"] -->|设备授权与目标设置| setup
+    setup -->|保存凭据与目标| inbox
     inbox -->|"Muse Link"| chat["已有的 Muse 侧边对话"]
 ```
 
