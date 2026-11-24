@@ -9,7 +9,7 @@
 
 ![Slack 敲响房门，X、LINE 和 Telegram 拿着信封排在门外，Muse 探出头来。](assets/museknock-doorstep.webp)
 
-MuseKnock 通过 Cloudflare Workers 把 Webhook 通知发送到已有的 Muse 侧边对话。你可以在 Muse 中通过 MCP 连接器选择目标对话。关闭电脑后，Worker 会继续投递通知。
+MuseKnock 通过 Cloudflare Workers 把 Webhook 通知发送到已有的 Muse 侧边对话。请 Muse 生成临时设置链接，再在浏览器中选择目标对话。关闭电脑后，Worker 会继续投递通知。
 
 [快速开始](#快速开始) · [使用案例](docs/recipes/README.zh-CN.md)
 
@@ -60,17 +60,17 @@ unset MUSEKNOCK_ADMIN_TOKEN
 
 此浏览器流程使用 Muse 的非公开认证 API。如果 Muse 更改接口或要求额外的账户验证，请使用[蓝牙授权步骤](docs/operations.zh-CN.md#首次授权设备)。Worker 通过 HTTPS 将密码和验证码发送给 Muse，但不持久保存。拿到设置链接的人在有效期内可以使用它，请勿分享。
 
-**4. 通过 Muse 注册对话并测试投递。** 可以按顺序向连接器提出以下请求。
+**4. 注册对话并测试投递。** 在浏览器中更改配置。
 
 1. “检查我的 MuseKnock 配置。” `get_setup_status` 检查 Worker 中的配置。下面的测试消息用于验证实际投递。
-2. 若设置页面提示对话自动注册失败，请请求“将现有会话 `已有会话ID` 注册为‘构建通知’，并设为通知目标。”MuseKnock 会先向所选 Muse VM 确认会话存在，再保存或切换目标。[Gadget SDK 侧边对话说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
+2. 若自动注册失败，请让 Muse “生成 MuseKnock 设置链接”。打开链接，将 `已有会话ID` 注册为“构建通知”并选为目标。链接只能使用一次，浏览器设置会话在十分钟后过期。请勿分享链接。MuseKnock 会先确认对话存在，再保存目标。[Gadget SDK 侧边对话说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “发送一条测试通知并检查回执。”Muse 使用新的 UUID 作为 `requestId` 调用 `send_test_notification`，然后用返回的回执 ID 调用 `get_delivery_status`。当状态为 `sent` 时，打开所选对话查看消息。重试同一次测试时，请使用相同的请求 ID。
 
 **5. 连接事件来源。** 如需接入 Slack、LINE、Twilio、Telegram、企业微信、GitHub 或 X，请参阅[直接连接服务](#直接连接服务)。Bluesky 和 Discord 的设置见[连接 Bluesky](#连接-bluesky)和[连接 Discord](#连接-discord)。支持自定义 Bearer 请求头的服务可以使用下面的通用 Webhook。
 
 如需使用通用 Webhook，请先在 Worker 的 Secret 中添加独立的随机令牌 `HOOK_TOKEN`。如需只读 MCP 连接器，再添加 `MCP_TOKEN`。每种用途应使用不同的令牌。
 
-在发送服务的 Webhook 设置中，将请求设为发往同一 Worker 的 `/v1/hooks/custom` 的 `POST`，添加 `Authorization: Bearer YOUR_HOOK_TOKEN` 和 `Content-Type: application/json`。发送 `{"message":"构建完成"}` 等正文后会收到回执 ID。之后可以在 Muse 中查看投递状态、暂停来源或筛选事件类型。
+在发送服务的 Webhook 设置中，将请求设为发往同一 Worker 的 `/v1/hooks/custom` 的 `POST`，添加 `Authorization: Bearer YOUR_HOOK_TOKEN` 和 `Content-Type: application/json`。发送 `{"message":"构建完成"}` 等正文后会收到回执 ID。可在 Muse 中查看投递状态；暂停来源或筛选事件类型请使用设置链接打开浏览器页面。
 
 ## 直接连接服务
 
@@ -150,6 +150,6 @@ Worker 每五分钟检查一个 Discord 服务器文字频道。首次检查仅�
 
 ## 切换目标对话
 
-告诉管理连接器另一个名称和会话 ID，注册后再说“将通知切换到这个对话”。如果尚未选择目标，首次注册的对话会自动成为默认目标。切换只影响接下来收到的通知。排队或重试中的通知仍按接收时确定的目标投递。
+请管理连接器生成设置链接，在浏览器中输入新的名称和会话 ID，然后将该对话选为通知目标。如果尚未选择目标，首次注册的对话会自动成为默认目标。切换只影响接下来收到的通知。排队或重试中的通知仍按接收时确定的目标投递。
 
-使用 `MCP_TOKEN` 的只读连接器可以列出已注册的对话、查看回执。管理连接器还可以暂停来源或设置事件类型过滤条件。可选的 CLI 安装方式、Webhook 格式及投递排查方法见[运维指南](docs/operations.zh-CN.md)。
+使用 `MCP_TOKEN` 的只读连接器可以列出已注册的对话、查看回执。管理连接器只生成短期设置链接；配置变更在浏览器页面中完成。可选的 CLI 安装方式、Webhook 格式及投递排查方法见[运维指南](docs/operations.zh-CN.md)。

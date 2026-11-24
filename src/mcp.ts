@@ -2,7 +2,6 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
-import { identifier } from './identifiers.ts'
 import { sideChatId } from './muse-device.ts'
 import type { Inbox } from './inbox.ts'
 
@@ -14,25 +13,14 @@ type DeliveryControls = Pick<
   | 'breakerStatus'
   | 'rearmBreaker'
   | 'sources'
-  | 'setPaused'
-  | 'setFilter'
   | 'listSideChats'
-  | 'registerSideChat'
-  | 'setActiveSideChat'
   | 'getSetupStatus'
   | 'beginPairing'
   | 'createBrowserSetupLink'
+  | 'createSettingsLink'
   | 'sendTestNotification'
 >
 
-const name = z.string().regex(identifier)
-const chatName = z
-  .string()
-  .trim()
-  .min(1)
-  .max(64)
-  .regex(/^[\p{L}\p{N}][\p{L}\p{N}\p{M} ._-]*$/u)
-  .describe('A case-sensitive name for this destination in MuseKnock.')
 const readOnly = { readOnlyHint: true, openWorldHint: false }
 const changeRule = { readOnlyHint: false, idempotentHint: true, openWorldHint: false }
 
@@ -130,6 +118,21 @@ export async function handleMcp(
 
   if (role === 'admin') {
     server.registerTool(
+      'create_settings_link',
+      {
+        description: 'Issue a ten-minute, one-use link to manage side chats, source pauses and event filters in a browser. Show the link only to the account owner. The user must open the link and submit changes on the page; this tool does not change settings.',
+        annotations: { readOnlyHint: false, openWorldHint: false },
+      },
+      async () => {
+        const issued = await inbox.createSettingsLink()
+        return result({
+          url: new URL('/v1/setup/settings/' + issued.token, request.url).toString(),
+          expiresAt: new Date(issued.expiresAt).toISOString(),
+        })
+      },
+    )
+
+    server.registerTool(
       'create_browser_setup_link',
       {
         description: 'Issue a one-use, ten-minute browser link to authorize this Worker as a Muse Gadget. Pass the session ID of the side chat where the user requested setup. Muse does not send the chat ID in MCP request metadata; include it as sessionId. Successful setup registers that chat and sends a completion notification there. If the ID is unknown, ask the user for the side chat URL. The Worker must have MUSE_SDK_TOKEN configured. A paired Worker must be reset before another link can be issued. Show the link only to the account owner.',
@@ -177,7 +180,7 @@ export async function handleMcp(
             'Enter the Worker URL, admin token and Gadget SDK token in the local pairing interface.',
             'On your phone, use a Bluetooth LE tool to write the one-time code shown on the Mac.',
             'When the Mac confirms the phone, disconnect the tool and select the printed gadget name in the Muse app on that phone.',
-            'Then register your existing side chat through MCP.',
+            'Then ask Muse for a settings link and register your existing side chat in the browser.',
           ].join(' '),
         })
       },
@@ -208,9 +211,7 @@ export async function handleMcp(
         if ('missingDevice' in receipt)
           return failure('Configure valid Muse device credentials in the Worker secrets first.')
         if ('noDestination' in receipt)
-          return failure(
-            'Register a destination with register_side_chat first, using an existing side chat ID.',
-          )
+          return failure('Register a destination side chat on the settings page first, using an existing side chat ID.')
         if ('limited' in receipt)
           return failure(
             'Test notification rate limit reached. Retry in 60 seconds with the same request ID.',
@@ -219,61 +220,6 @@ export async function handleMcp(
       },
     )
 
-    server.registerTool(
-      'register_side_chat',
-      {
-        description:
-          'Verify the session ID with Muse before saving or updating this destination. The lookup posts no message. Ask the user for the ID if it is unknown. The first destination becomes active. Updating an active destination affects future webhooks.',
-        inputSchema: {
-          name: chatName,
-          sessionId: z
-            .string()
-            .regex(sideChatId)
-            .describe('The existing Muse side chat session ID.'),
-        },
-        annotations: { ...changeRule, openWorldHint: true },
-      },
-      async ({ name, sessionId }) => {
-        const destinations = await inbox.registerSideChat(name, sessionId)
-        return 'error' in destinations ? failure(destinations.error) : result(destinations)
-      },
-    )
-
-    server.registerTool(
-      'set_active_side_chat',
-      {
-        description:
-          'Verify a registered side chat with Muse and route future webhooks there by name. Already accepted webhooks keep their original destination.',
-        inputSchema: { name: chatName },
-        annotations: { ...changeRule, openWorldHint: true },
-      },
-      async ({ name }) => {
-        const destinations = await inbox.setActiveSideChat(name)
-        return 'error' in destinations ? failure(destinations.error) : result(destinations)
-      },
-    )
-
-    server.registerTool(
-      'set_source_paused',
-      {
-        description:
-          "Pause or resume a webhook source at the user's request. A delivery already in progress may still arrive.",
-        inputSchema: { source: name, paused: z.boolean() },
-        annotations: changeRule,
-      },
-      async ({ source, paused }) => result(await inbox.setPaused(source, paused)),
-    )
-
-    server.registerTool(
-      'set_event_filter',
-      {
-        description:
-          "Replace the event types allowed for one source at the user's request. An empty list allows all event types.",
-        inputSchema: { source: name, types: z.array(name).max(64) },
-        annotations: changeRule,
-      },
-      async ({ source, types }) => result(await inbox.setFilter(source, types)),
-    )
   }
 
   const transport = new WebStandardStreamableHTTPServerTransport({

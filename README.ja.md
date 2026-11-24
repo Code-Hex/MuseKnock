@@ -9,7 +9,7 @@
 
 ![封筒を持った X、LINE、Telegram が並ぶ前で Slack が扉をノックし、Muse が顔を出す。](assets/museknock-doorstep.webp)
 
-MuseKnock は Cloudflare Workers で Webhook を受け取り、既存の Muse サイドチャットに通知を届けます。投稿先は Muse の MCP コネクタから選べます。パソコンの電源を切っても Worker が配信を続けます。
+MuseKnock は Cloudflare Workers で Webhook を受け取り、既存の Muse サイドチャットに通知を届けます。Muse に一時的な設定リンクを発行してもらい、ブラウザで投稿先を選びます。パソコンの電源を切っても Worker が配信を続けます。
 
 [クイックスタート](#クイックスタート) · [レシピ集](docs/recipes/README.ja.md)
 
@@ -60,17 +60,17 @@ unset MUSEKNOCK_ADMIN_TOKEN
 
 このブラウザ方式は Muse の非公開認証 API を利用します。Muse の変更や追加の本人確認によって完了できない場合は、[Bluetooth を使う認証手順](docs/operations.ja.md#初回の端末認証)を使ってください。入力したパスワードと確認コードは Worker から Muse に HTTPS で送られ、Worker の保存領域には残しません。セットアップ URL は開いた人が利用できるため、他人に共有しないでください。
 
-**4. Muse に投稿先の登録とテストを頼みます。** 次の順に依頼してください。
+**4. 投稿先を登録してテストします。** 設定変更はブラウザで行います。
 
 1. 「MuseKnock の設定を確認して」。`get_setup_status` は Worker 内の設定を確認します。実際に届くかはテスト投稿で確かめます。
-2. セットアップ画面で通知先の自動登録に失敗した場合は、「既存のセッション `既存のセッションID` を『ビルド通知』として登録し、通知先にして」。MuseKnock は登録・切替の前に、選択した Muse VM にそのセッションが存在することを確認します。[Gadget SDK のサイドチャット](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
+2. 通知先の自動登録に失敗した場合は、Muse に「MuseKnock の設定リンクを発行して」と頼みます。リンクを開き、`既存のセッションID` を『ビルド通知』として登録して通知先に選びます。リンクは一度使うと無効になり、ブラウザの設定セッションは10分で期限切れになります。他人に共有しないでください。MuseKnock は保存前にチャットの存在を確認します。[Gadget SDK のサイドチャット](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. 「テスト通知を1件送り、配信状態を確認して」。Muse は新しい UUID を `requestId` として `send_test_notification` を呼び、返った受付 ID を `get_delivery_status` に渡します。`sent` になったら選んだチャットを開きます。同じテストを再試行するときは同じリクエスト ID を使います。
 
 **5. 送信元サービスを接続します。** Slack、LINE、Twilio、Telegram、企業微信、GitHub、X には[サービス別の設定手順](#サービスを直接接続する)を使います。Bluesky と Discord の設定は [Bluesky を接続する](#bluesky-を接続する)と [Discord を接続する](#discord-を接続する)を参照してください。Bearer ヘッダーを指定できる送信元には、次の汎用 Webhook が使えます。
 
 汎用 Webhook を使う場合は、別途ランダムな `HOOK_TOKEN` を Worker の Secret に追加してください。閲覧専用の MCP コネクタを使う場合は `MCP_TOKEN` も追加します。用途ごとに別の値を使います。
 
-送信元の Webhook 設定で、同じ Worker の `/v1/hooks/custom` に `POST` を指定します。ヘッダーを `Authorization: Bearer YOUR_HOOK_TOKEN`、`Content-Type: application/json` とし、例えば `{"message":"ビルドが完了しました"}` を送ると受付 ID が返ります。以降は Muse から配信状態の確認、通知元の一時停止、イベント種別の絞り込みができます。
+送信元の Webhook 設定で、同じ Worker の `/v1/hooks/custom` に `POST` を指定します。ヘッダーを `Authorization: Bearer YOUR_HOOK_TOKEN`、`Content-Type: application/json` とし、例えば `{"message":"ビルドが完了しました"}` を送ると受付 ID が返ります。配信状態は Muse で確認できます。通知元の停止やイベント種別の絞り込みには、設定リンクのブラウザ画面を使います。
 
 ## サービスを直接接続する
 
@@ -150,6 +150,6 @@ Webhook、定期取得、MCP のテスト送信を合わせた送信試行回数
 
 ## 投稿先を切り替える
 
-管理用コネクタに別の登録名とセッション ID を伝え、「そのチャットを通知先にして」と頼みます。投稿先が未設定なら最初の登録が自動で選ばれます。切り替えは次に受け付ける通知から有効です。配信待ちや再送の通知には、受付時の投稿先を使います。
+管理用コネクタに設定リンクを発行してもらい、ブラウザで別の登録名とセッション ID を入力して通知先に選びます。投稿先が未設定なら最初の登録が自動で選ばれます。切り替えは次に受け付ける通知から有効です。配信待ちや再送の通知には、受付時の投稿先を使います。
 
-`MCP_TOKEN` を使う閲覧用コネクタでは、登録済みチャットや配信状態を確認できます。管理用コネクタでは通知元の一時停止やイベント種別の絞り込みもできます。CLI でのセットアップ、Webhook の形式、配信の調査については[運用ガイド](docs/operations.ja.md)を参照してください。
+`MCP_TOKEN` を使う閲覧用コネクタでは、登録済みチャットや配信状態を確認できます。管理用コネクタは一時的な設定リンクを発行し、設定変更はブラウザ画面で行います。CLI でのセットアップ、Webhook の形式、配信の調査については[運用ガイド](docs/operations.ja.md)を参照してください。

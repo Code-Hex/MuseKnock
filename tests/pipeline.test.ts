@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import { Response, WebSocketPair } from 'miniflare'
 import { setTimeout as delay } from 'node:timers/promises'
 import { connect } from './mcp-client.ts'
+import { openSettings } from './settings-client.ts'
 import { startConfiguredWorker, startWorker, waitForAssertion } from './worker.ts'
 
 test('new webhooks and MCP verification respect the pairing retry time across deployments', async (t) => {
@@ -37,10 +38,8 @@ test('new webhooks and MCP verification respect the pairing retry time across de
       await post()
       const admin = await connect(new URL('/mcp', worker.url), 'MCP_ADMIN_TOKEN-test')
       try {
-        const verification = await admin.callTool({
-          name: 'register_side_chat', arguments: { name: 'alerts', sessionId: 'existing' },
-        })
-        assert.equal(verification.isError, true)
+        const settings = await openSettings(worker.url, admin)
+        assert.equal((await settings.register('alerts', 'existing')).status, 422)
       } finally {
         await admin.close()
       }

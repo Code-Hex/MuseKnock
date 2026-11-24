@@ -9,7 +9,7 @@
 
 ![Slack knocks on the door as X, LINE, and Telegram wait with envelopes. Muse opens the door.](assets/museknock-doorstep.webp)
 
-MuseKnock delivers webhooks from Cloudflare Workers to an existing Muse side chat. You choose the destination in Muse through an MCP connector. The Worker handles delivery while your computer is off.
+MuseKnock delivers webhooks from Cloudflare Workers to an existing Muse side chat. Muse issues a temporary settings link so you can choose the destination in your browser. The Worker handles delivery while your computer is off.
 
 [Quick start](#quick-start) · [Recipes](docs/recipes/README.md)
 
@@ -60,17 +60,17 @@ A successful reset returns an empty `204` response and issues no link. Pending n
 
 This browser flow uses Muse's private authentication API. If Muse changes it or requires additional account checks, use the [Bluetooth authorization procedure](docs/operations.md#authorize-a-device). The Worker sends your password and verification code to Muse over HTTPS and does not persist them. Anyone with the setup link can use it until it expires, so keep it private.
 
-**4. Register and test the chat from Muse.** You can ask the connector to do each step in plain language.
+**4. Register and test the chat.** Ask Muse for a settings link, then make configuration changes in your browser.
 
 1. “Check my MuseKnock configuration.” `get_setup_status` checks local settings. The test post below checks delivery.
-2. If the setup page reports that automatic registration failed, ask Muse to “Register the existing session `YOUR-EXISTING-SESSION-ID` as `builds` and select it for notifications.” MuseKnock checks that the session exists on the selected Muse VM before saving or switching the destination. [Gadget SDK side chats](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
+2. If automatic registration failed, ask Muse to “Create a MuseKnock settings link.” Open the link and register `YOUR-EXISTING-SESSION-ID` as `builds`, then select it. The one-use link opens a browser session that expires after ten minutes. MuseKnock verifies the chat with Muse before saving it. Keep the link private. [Gadget SDK side chats](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “Send one test notification and check its receipt.” Muse calls `send_test_notification` with a fresh UUID as `requestId`, then `get_delivery_status` with the returned receipt ID. Look in the selected chat when the status is `sent`. Reuse the same request ID when retrying the same test.
 
 **5. Connect your event source.** For Slack, LINE, Twilio, Telegram, WeCom, GitHub, or X, follow [Connect a service directly](#connect-a-service-directly). For Bluesky or Discord, see [Connect Bluesky](#connect-bluesky) or [Connect Discord](#connect-discord). For a sender that supports a custom Bearer header, use the generic webhook below.
 
 For the custom webhook, first add a separate random Worker secret named `HOOK_TOKEN`. A read-only MCP connector uses another optional secret, `MCP_TOKEN`. Use a different token for each role.
 
-In the sending service, configure `POST /v1/hooks/custom` on the same Worker, with `Authorization: Bearer YOUR_HOOK_TOKEN` and `Content-Type: application/json`. A body such as `{"message":"Build finished"}` returns a receipt ID. You can ask Muse to check that receipt, pause sources, and filter event types.
+In the sending service, configure `POST /v1/hooks/custom` on the same Worker, with `Authorization: Bearer YOUR_HOOK_TOKEN` and `Content-Type: application/json`. A body such as `{"message":"Build finished"}` returns a receipt ID. Ask Muse to check the receipt. To pause a source or filter event types, request a settings link and use its browser page.
 
 ## Connect a service directly
 
@@ -150,6 +150,6 @@ When either limit is reached, fix the source of the loop before resetting the bu
 
 ## Change the destination
 
-Ask the admin connector to register another name and session ID, then say “Switch notifications to that chat.” The first registration becomes active if there is no destination yet. Switching affects newly accepted notifications. Queued deliveries and retries keep the destination they had when accepted.
+Ask the admin connector to create a settings link. Open it, register another name and session ID, then select that chat as the active destination. The first registration becomes active if there is no destination yet. Switching affects newly accepted notifications. Queued deliveries and retries keep the destination they had when accepted.
 
-A connector configured with `MCP_TOKEN` can list registered chats and check receipts. The admin connector can also pause sources and filter event types. For optional CLI setup, webhook formats, and troubleshooting, see the [operations guide](docs/operations.md).
+A connector configured with `MCP_TOKEN` can list registered chats and check receipts. The admin connector can issue temporary settings links; configuration changes happen on the browser page. For optional CLI setup, webhook formats, and troubleshooting, see the [operations guide](docs/operations.md).

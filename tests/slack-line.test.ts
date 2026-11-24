@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
 import { test } from 'node:test'
 import { connect } from './mcp-client.ts'
+import { openSettings } from './settings-client.ts'
 import { startConfiguredWorker, startWorker } from './worker.ts'
 
 const secrets = {
@@ -216,11 +217,8 @@ test('Slack overlapping subscriptions queue one creation under either callback o
     t.after(() => worker.close())
     const admin = await connect(new URL('/mcp', worker.url), 'MCP_ADMIN_TOKEN-test')
     t.after(() => admin.close())
-    const rule = await admin.callTool({
-      name: 'set_event_filter',
-      arguments: { source: 'slack', types: allowed },
-    })
-    assert.ok(!rule.isError)
+    const settings = await openSettings(worker.url, admin)
+    assert.equal((await settings.filter('slack', allowed)).status, 303)
     const pairs = [['app_mention', 'message'], ['message', 'app_mention']]
     for (const [i, pair] of pairs.entries()) {
       for (const type of pair) {

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { Response } from 'miniflare'
 import { connect } from './mcp-client.ts'
+import { openSettings } from './settings-client.ts'
 import { startWorker } from './worker.ts'
 
 test('switching pairings keeps each rotated token usable across Worker deployments', async (t) => {
@@ -45,10 +46,8 @@ test('switching pairings keeps each rotated token usable across Worker deploymen
         assert.deepEqual(status.structuredContent, {
           active: null, deviceConfigured: true, credentialStorageReady: key === secret, ready: false,
         })
-        const response = await admin.callTool({
-          name: 'register_side_chat', arguments: { name: 'alerts', sessionId: 'existing' },
-        })
-        assert.equal(response.isError, true)
+        const settings = await openSettings(worker.url, admin)
+        assert.equal((await settings.register('alerts', 'existing')).status, 422)
       } finally {
         await admin.close()
       }
@@ -90,10 +89,11 @@ test('removing all three setup secrets preserves the chat, webhook ingress and r
           deviceConfigured: step !== 1, credentialStorageReady: true,
           active: step === 1 ? null : 'Notifications', ready: step !== 1,
         })
-        await admin.callTool({ name: 'register_side_chat', arguments: { name: 'check', sessionId: 'existing' } })
+        const settings = await openSettings(worker.url, admin)
+        await settings.register('check', 'existing')
         if (step > 0) {
           for (const source of ['custom', 'telegram']) {
-            await admin.callTool({ name: 'set_source_paused', arguments: { source, paused: true } })
+            assert.equal((await settings.pause(source, true)).status, 303)
           }
           const hook = await fetch(new URL('/v1/hooks/custom', worker.url), {
             method: 'POST', headers: { Authorization: 'Bearer HOOK_TOKEN-test' }, body: 'handoff',
@@ -148,7 +148,8 @@ test('a corrected bootstrap SDK token uses the rotated refresh token and clears 
           assert.match(await hook.text(), /Configure the Muse device/)
           continue
         }
-        await admin.callTool({ name: 'register_side_chat', arguments: { name: 'check', sessionId: 'existing' } })
+        const settings = await openSettings(worker.url, admin)
+        await settings.register('check', 'existing')
         const result = await admin.callTool({name: 'begin_muse_pairing'})
         assert.deepEqual(result.structuredContent, {state:'configured', verification:step === 1 ? 'rejected' : 'verified'})
         const managed = await admin.callTool({ name: 'begin_muse_pairing', arguments: { replace: true } })
@@ -188,7 +189,8 @@ test('a replacement waiting for Muse keeps accepting webhooks for the current ch
   })
   assert.equal((await post('first')).status, 204)
   await worker.setFixtureChat('vm')
-  await admin.callTool({ name: 'set_source_paused', arguments: { source: 'custom', paused: true } })
+  const settings = await openSettings(worker.url, admin)
+  assert.equal((await settings.pause('custom', true)).status, 303)
   const replacement = post('replacement', (await begin(true)).replaces)
   await verifying
   try {
@@ -239,7 +241,8 @@ test('lease discovery saves a rotated device again after a transient write failu
   const admin = await connect(new URL('/mcp', worker.url), 'MCP_ADMIN_TOKEN-test')
   t.after(() => admin.close())
   await worker.failCredentialWrites(1)
-  await admin.callTool({ name: 'register_side_chat', arguments: { name: 'chat', sessionId: 'session' } })
+  const settings = await openSettings(worker.url, admin)
+  await settings.register('chat', 'session')
   assert.deepEqual(requests, [
     ['/device_token/refresh', 'Bearer hatch_refresh:test-initial-refresh'], ['/fetch_vms', 'Bearer access'],
   ])

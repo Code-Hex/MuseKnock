@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Response } from 'miniflare'
 import { connect } from './mcp-client.ts'
+import { openSettings } from './settings-client.ts'
 import { startConfiguredWorker, startWorker, waitForAssertion } from './worker.ts'
 
 function assertRecord(value: unknown): asserts value is Record<string, unknown> {
@@ -26,16 +27,13 @@ test('MCP readers inspect delivery rules; only administrators can change them', 
   assert.deepEqual((await admin.listTools()).tools.map((tool) => tool.name).sort(), [
     'begin_muse_pairing',
     'create_browser_setup_link',
+    'create_settings_link',
     'get_delivery_breaker',
     'get_delivery_status',
     'get_setup_status',
     'list_side_chats',
     'list_sources',
-    'register_side_chat',
     'send_test_notification',
-    'set_active_side_chat',
-    'set_event_filter',
-    'set_source_paused',
   ])
 
   assert.deepEqual((await reader.callTool({ name: 'list_side_chats' })).structuredContent, {
@@ -49,32 +47,23 @@ test('MCP readers inspect delivery rules; only administrators can change them', 
 
   const pause = { name: 'set_source_paused', arguments: { source: 'ci', paused: true } }
   assert.equal((await reader.callTool(pause)).isError, true)
+  assert.equal((await admin.callTool(pause)).isError, true)
+  const settings = await openSettings(worker.url, admin)
   assert.deepEqual((await reader.callTool({ name: 'list_sources' })).structuredContent, {
     sources: [],
   })
-  assert.deepEqual((await admin.callTool(pause)).structuredContent, {
+  assert.equal((await settings.pause('ci', true)).status, 303)
+  assert.deepEqual(((await reader.callTool({ name: 'list_sources' })).structuredContent as { sources: unknown[] }).sources[0], {
     source: 'ci',
     paused: true,
     types: [],
   })
-  const filter = await admin.callTool({
-    name: 'set_event_filter',
-    arguments: { source: 'ci', types: ['failed'] },
-  })
-  assert.deepEqual(filter.structuredContent, { source: 'ci', paused: true, types: ['failed'] })
+  assert.equal((await settings.filter('ci', ['failed'])).status, 303)
   assert.deepEqual((await reader.callTool({ name: 'list_sources' })).structuredContent, {
     sources: [{ source: 'ci', paused: true, types: ['failed'] }],
   })
 
-  assert.equal(
-    (
-      await admin.callTool({
-        name: 'set_event_filter',
-        arguments: { source: 'ci', types: ['not an event type'] },
-      })
-    ).isError,
-    true,
-  )
+  assert.equal((await settings.filter('ci', ['not an event type'])).status, 400)
   assert.equal(
     (
       await reader.callTool({
@@ -122,13 +111,9 @@ test('first setup preserves an empty registry when Muse cannot verify a destinat
   const reader = await connect(url, 'MCP_TOKEN-test')
   const admin = await connect(url, 'MCP_ADMIN_TOKEN-test')
   t.after(() => Promise.all([reader.close(), admin.close()]))
+  const settings = await openSettings(worker.url, admin)
 
   const list = () => reader.callTool({ name: 'list_side_chats' })
-  const register = (name: string, sessionId: string) => ({
-    name: 'register_side_chat',
-    arguments: { name, sessionId },
-  })
-  const select = (name: string) => ({ name: 'set_active_side_chat', arguments: { name } })
   const post = () =>
     fetch(new URL('/v1/hooks/custom', worker.url), {
       method: 'POST',
@@ -150,14 +135,13 @@ test('first setup preserves an empty registry when Muse cannot verify a destinat
   assert.match(JSON.stringify(missingDestination.content), /register.*side chat/i)
   assert.deepEqual((await list()).structuredContent, { active: null, chats: [] })
   assert.equal((await post()).status, 503)
-  const addFirst = register('Builds', 'room-1')
-  assert.equal((await reader.callTool(addFirst)).isError, true)
-  assert.equal((await admin.callTool(register('bad\nname', 'room-1'))).isError, true)
-  assert.equal((await admin.callTool(register('untrusted', 'https://invalid.example'))).isError, true)
-  const unavailable = await admin.callTool(addFirst)
-  assert.equal(unavailable.isError, true)
-  assert.match(JSON.stringify(unavailable.content), /could not verify/i)
-  assert.equal((await admin.callTool(select('missing'))).isError, true)
+  assert.equal((await reader.callTool({ name: 'register_side_chat', arguments: { name: 'Builds', sessionId: 'room-1' } })).isError, true)
+  assert.equal((await settings.register('bad\nname', 'room-1')).status, 400)
+  assert.equal((await settings.register('untrusted', 'https://invalid.example')).status, 400)
+  const unavailable = await settings.register('Builds', 'room-1')
+  assert.equal(unavailable.status, 422)
+  assert.match(await unavailable.text(), /could not verify/i)
+  assert.equal((await settings.select('missing')).status, 422)
   assert.deepEqual((await list()).structuredContent, { active: null, chats: [] })
   assert.equal((await post()).status, 503)
 })
@@ -190,10 +174,8 @@ test('MCP test notifications respect the source pause and rate limits', async (t
   t.after(() => worker.close())
   const admin = await connect(new URL('/mcp', worker.url), 'MCP_ADMIN_TOKEN-test')
   t.after(() => admin.close())
-  await admin.callTool({
-    name: 'set_source_paused',
-    arguments: { source: 'museknock-test', paused: true },
-  })
+  const settings = await openSettings(worker.url, admin)
+  assert.equal((await settings.pause('museknock-test', true)).status, 303)
   const send = () =>
     admin.callTool({
       name: 'send_test_notification',

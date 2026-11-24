@@ -15,7 +15,7 @@ export type BrowserSetupSession = {
   expiresAt: number
   nodeId: string
   sideChatId?: string
-  notice?: string
+  notice?: 'delivery_pending' | 'chat_registration_failed' | 'delivery_failed'
   waterfallId: string
   csrf?: string
   keyId?: number
@@ -25,8 +25,12 @@ export type BrowserSetupSession = {
   selectedMethod?: string
   passwordAvailable?: boolean
   stage: 'contact' | 'otp' | 'password' | 'two_factor' | 'done' | 'error'
-  error?: string
+  error?: BrowserSetupIssue
 }
+
+export type BrowserSetupIssue =
+  | { kind: 'upstream'; status: number; type?: string }
+  | { kind: 'manual_check' | 'invalid_step' | 'generic' }
 
 class AuthError extends Error {
   constructor(readonly status: number, readonly problem: Json) {
@@ -127,7 +131,7 @@ export async function encryptWebPassword(password: string, keyId: number, public
 async function acceptCredentials(session: BrowserSetupSession, data: Json, sdkToken: string, request: Request) {
   if (data.checkpoint_required || data.checkpoint_url || data.reactivation_required || data.account_selection_required) {
     session.stage = 'error'
-    session.error = 'Muse 側で追加の本人確認を完了してから、リンクを作り直してください。'
+    session.error = { kind: 'manual_check' }
     return { session }
   }
   if (data.two_factor_required) {
@@ -221,13 +225,13 @@ export async function advanceWebLogin(session: BrowserSetupSession, action: stri
   return acceptCredentials(session, response, sdkToken, request)
 }
 
-export function browserSetupError(error: unknown): string {
+export function browserSetupError(error: unknown): BrowserSetupIssue {
   if (error instanceof AuthError) {
     const type = string(error.problem.type)
-    return 'Muse が認証を拒否しました (HTTP ' + error.status +
-      (type && /^[A-Za-z0-9_./-]{1,100}$/.test(type) ? ', ' + type : '') + ')。'
+    return { kind: 'upstream', status: error.status,
+      ...(type && /^[A-Za-z0-9_./-]{1,100}$/.test(type) ? { type } : {}) }
   }
   return error instanceof Error && error.message === 'Invalid login step'
-    ? 'この操作は現在の認証段階では使えません。'
-    : 'Muse との接続または認証を完了できませんでした。再試行してください。'
+    ? { kind: 'invalid_step' }
+    : { kind: 'generic' }
 }

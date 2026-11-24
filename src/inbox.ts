@@ -142,6 +142,41 @@ export class Inbox extends DurableObject<MuseBindings> {
     return { state: 'issued', token, expiresAt, nodeId: pairing.nodeId } as const
   }
 
+  async createSettingsLink() {
+    const token = this.browserToken()
+    const expiresAt = Date.now() + 10 * 60_000
+    this.ctx.storage.kv.put('settings-ticket', { hash: await this.browserHash(token), expiresAt })
+    return { token, expiresAt }
+  }
+
+  async settingsTicket(token: string) {
+    if (!/^[0-9a-f]{64}$/.test(token)) return null
+    const ticket = this.ctx.storage.kv.get<{ hash: string; expiresAt: number }>('settings-ticket')
+    return ticket && ticket.expiresAt > Date.now() && ticket.hash === await this.browserHash(token)
+      ? { expiresAt: ticket.expiresAt } : null
+  }
+
+  async openSettings(token: string, sessionToken: string) {
+    if (!/^[0-9a-f]{64}$/.test(token) || !/^[0-9a-f]{64}$/.test(sessionToken)) return null
+    const [ticketHash, sessionHash] = await Promise.all([
+      this.browserHash(token), this.browserHash(sessionToken),
+    ])
+    const ticket = this.ctx.storage.kv.get<{ hash: string; expiresAt: number }>('settings-ticket')
+    if (!ticket || ticket.expiresAt <= Date.now() || ticket.hash !== ticketHash) return null
+    this.ctx.storage.kv.delete('settings-ticket')
+    this.ctx.storage.kv.put('settings-active', {
+      hash: sessionHash, expiresAt: ticket.expiresAt,
+    })
+    return { expiresAt: ticket.expiresAt }
+  }
+
+  async settingsSession(sessionToken: string) {
+    if (!/^[0-9a-f]{64}$/.test(sessionToken)) return null
+    const active = this.ctx.storage.kv.get<{ hash: string; expiresAt: number }>('settings-active')
+    return active && active.expiresAt > Date.now() && active.hash === await this.browserHash(sessionToken)
+      ? { expiresAt: active.expiresAt } : null
+  }
+
   async resetSetup() {
     const run = this.browserUpdates.then(() => this.updateCredentials(async () => {
       if (!this.credentialStorageReady) return 'unavailable' as const
@@ -150,6 +185,8 @@ export class Inbox extends DurableObject<MuseBindings> {
       const activeSession = this.ctx.storage.kv.get<string>('browser-setup-active')
       this.ctx.storage.kv.delete('browser-setup-ticket')
       this.ctx.storage.kv.delete('browser-setup-active')
+      this.ctx.storage.kv.delete('settings-ticket')
+      this.ctx.storage.kv.delete('settings-active')
       this.ctx.storage.kv.delete('active-pairing')
       this.queue.abandonPending()
       this.device = null
@@ -245,18 +282,16 @@ export class Inbox extends DurableObject<MuseBindings> {
             try {
               const chats = await this.registerSideChat('MuseKnock', session.sideChatId)
               if ('error' in chats) {
-                session.notice = '通知先の自動登録ができませんでした。Muse でサイドチャットを登録してください。'
+                session.notice = 'chat_registration_failed'
               } else {
                 const receipt = await this.enqueue({
                   key: crypto.randomUUID(), source: 'museknock-setup', type: 'setup_complete',
                   text: 'MuseKnock setup complete. Webhook notifications are ready.',
                 })
-                session.notice = 'state' in receipt
-                  ? 'サイドチャットへ完了通知を送信しています。'
-                  : '通知先の自動登録は完了しました。完了通知の送信を再試行してください。'
+                session.notice = 'state' in receipt ? 'delivery_pending' : 'delivery_failed'
               }
             } catch {
-              session.notice = '通知先の自動登録ができませんでした。Muse でサイドチャットを登録してください。'
+              session.notice = 'chat_registration_failed'
             }
           }
         }

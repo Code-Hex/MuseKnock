@@ -13,6 +13,7 @@ import { fetch as localFetch, Response } from 'miniflare'
 import { z } from 'zod'
 import { sendOverLink } from '../src/link/chat.ts'
 import { connect } from './mcp-client.ts'
+import { openSettings } from './settings-client.ts'
 import { startWorker } from './worker.ts'
 
 test(
@@ -138,39 +139,37 @@ test(
     t.after(() => worker.close())
     const admin = await connect(new URL('/mcp', worker.url), 'MCP_ADMIN_TOKEN-test')
     t.after(() => admin.close())
-    const selected = await admin.callTool({
-      name: 'register_side_chat',
-      arguments: { name: 'My existing chat', sessionId: 'same-chat' },
-    })
-    assert.deepEqual(selected.structuredContent, {
+    const settings = await openSettings(worker.url, admin)
+    assert.equal((await settings.register('My existing chat', 'same-chat')).status, 303)
+    const selected = (await admin.callTool({ name: 'list_side_chats' })).structuredContent
+    assert.deepEqual(selected, {
       active: 'My existing chat',
       chats: [{ name: 'My existing chat', sessionId: 'same-chat' }],
     })
-    const register = (name: string, sessionId: string) =>
-      admin.callTool({ name: 'register_side_chat', arguments: { name, sessionId } })
-    const activate = (name: string) =>
-      admin.callTool({ name: 'set_active_side_chat', arguments: { name } })
+    const register = settings.register
+    const activate = settings.select
     const missing = await register('My existing chat', 'missing-chat')
-    assert.equal(missing.isError, true)
-    assert.match(JSON.stringify(missing.content), /not found/i)
+    assert.equal(missing.status, 422)
+    assert.match(await missing.text(), /not found/i)
     const unavailable = await register('My existing chat', 'busy-chat')
-    assert.equal(unavailable.isError, true)
-    assert.match(JSON.stringify(unavailable.content), /could not verify/i)
-    assert.deepEqual((await admin.callTool({ name: 'list_side_chats' })).structuredContent, selected.structuredContent)
-    assert.notEqual((await register('Other', 'other-chat')).isError, true)
-    assert.deepEqual((await activate('Other')).structuredContent, {
+    assert.equal(unavailable.status, 422)
+    assert.match(await unavailable.text(), /could not verify/i)
+    assert.deepEqual((await admin.callTool({ name: 'list_side_chats' })).structuredContent, selected)
+    assert.equal((await register('Other', 'other-chat')).status, 303)
+    assert.equal((await activate('Other')).status, 303)
+    assert.deepEqual((await admin.callTool({ name: 'list_side_chats' })).structuredContent, {
       active: 'Other', chats: [{ name: 'My existing chat', sessionId: 'same-chat' }, { name: 'Other', sessionId: 'other-chat' }],
     })
     defaultChanged = true
     originalLeased = false
-    assert.equal((await activate('My existing chat')).isError, true)
+    assert.equal((await activate('My existing chat')).status, 422)
     const unchanged = await admin.callTool({ name: 'list_side_chats' })
     assert.equal(z.object({ active: z.string() }).parse(unchanged.structuredContent).active, 'Other')
     originalLeased = true
-    assert.notEqual((await activate('My existing chat')).isError, true)
+    assert.equal((await activate('My existing chat')).status, 303)
     const disappeared = await activate('Other')
-    assert.equal(disappeared.isError, true)
-    assert.match(JSON.stringify(disappeared.content), /not found/i)
+    assert.equal(disappeared.status, 422)
+    assert.match(await disappeared.text(), /not found/i)
     async function postAndWait(url: URL, key: string, body: string, contentType = 'text/plain') {
       const post = () => fetch(new URL('/v1/hooks/custom', url), {
         method: 'POST',
@@ -214,10 +213,7 @@ test(
       state = status.state
     } while ((state === 'queued' || state === 'sending') && Date.now() < until)
     assert.equal(state, 'sent')
-    const filter = await admin.callTool({
-      name: 'set_event_filter', arguments: { source: 'line', types: ['message'] },
-    })
-    assert.notEqual(filter.isError, true)
+    assert.equal((await settings.filter('line', ['message'])).status, 303)
     const batch = JSON.stringify({ events: [
       { type: 'message', webhookEventId: 'L1', message: { type: 'text', id: 'msg1', text: 'withdrawn' } },
       { type: 'unsend', webhookEventId: 'L2', unsend: { messageId: 'msg1' } },
@@ -242,10 +238,9 @@ test(
     t.after(() => deletedWorker.close())
     const deletedAdmin = await connect(new URL('/mcp', deletedWorker.url), 'MCP_ADMIN_TOKEN-test')
     t.after(() => deletedAdmin.close())
-    const registered = await deletedAdmin.callTool({
-      name: 'register_side_chat', arguments: { name: 'Deleted', sessionId: 'deleted-after-registration' },
-    })
-    assert.deepEqual(registered.structuredContent, {
+    const deletedSettings = await openSettings(deletedWorker.url, deletedAdmin)
+    assert.equal((await deletedSettings.register('Deleted', 'deleted-after-registration')).status, 303)
+    assert.deepEqual((await deletedAdmin.callTool({ name: 'list_side_chats' })).structuredContent, {
       active: 'Deleted', chats: [{ name: 'Deleted', sessionId: 'deleted-after-registration' }],
     })
     const queued = await deletedAdmin.callTool({
@@ -276,10 +271,9 @@ test(
           if (index === 0) {
             const client = await connect(new URL('/mcp', instance.url), 'MCP_ADMIN_TOKEN-test')
             try {
-              const result = await client.callTool({
-                name: 'register_side_chat', arguments: { name: 'Notifications', sessionId: 'same-chat' },
-              })
-              assert.deepEqual(result.structuredContent, {
+              const setup = await openSettings(instance.url, client)
+              assert.equal((await setup.register('Notifications', 'same-chat')).status, 303)
+              assert.deepEqual((await client.callTool({ name: 'list_side_chats' })).structuredContent, {
                 active: 'Notifications',
                 chats: [{ name: 'Notifications', sessionId: 'same-chat' }],
               })
