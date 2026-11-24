@@ -4,21 +4,13 @@
 
 ## Authorize a device
 
-For Mac and phone pairing, run `npm run authorize -- --bluetooth` on the Mac. The command uses uv to install the macOS Bluetooth bindings and the pinned Muse SDK pairing protocol. The phone app authorizes a new device for this Worker. To renew the same Worker’s pairing, add `--replace`. The following verification-code method is available for accounts that Muse allows to sign in with a code. Follow the phone verification steps in the [quick start](../README.md#quick-start).
+Open `Pair MuseKnock.command` on a Bluetooth-enabled Mac and authorize it from Muse on your phone. uv installs the macOS Bluetooth bindings and the pinned Muse Gadget SDK. Follow the [quick start](../README.md#quick-start).
 
-If you already have a valid pairing for this Worker, you can use the Cloudflare dashboard. Under **Settings → Variables and Secrets**, add its matching `MUSE_NODE_ID`, `MUSE_SDK_TOKEN` and `MUSE_REFRESH_TOKEN` as secrets and deploy them together. Call `begin_muse_pairing` through the admin connector. When it returns `configured`, continue with side chat registration. The command below is for a fresh pairing.
+If you already have a valid pairing for this Worker, you can use the Cloudflare dashboard. Under **Settings → Variables and Secrets**, add its matching `MUSE_NODE_ID`, `MUSE_SDK_TOKEN` and `MUSE_REFRESH_TOKEN` as secrets and deploy them together. Call `begin_muse_pairing` through the admin connector. When it returns `configured`, continue with side chat registration.
 
-The admin MCP tool `begin_muse_pairing` returns a node ID derived from the Worker’s Durable Object identity. The command calls the same tool, so you never need to copy the node ID. Enter verification codes only in the private terminal.
-
-Use a private terminal in the MuseKnock repository (a personal Codespace works). After deployment run `npm ci` and `npm run authorize`. Enter the HTTPS origin of your own Worker, its `MCP_ADMIN_TOKEN`, your SDK token and your account email or phone number. Complete the verification code and any account selection or two-factor challenge Muse offers. If Muse requires an account checkpoint, complete it in the Muse app before restarting.
-
-For SMS sign-in you can pass the two-letter country code for your phone number. For a Japanese mobile number, run `npm run authorize -- --region JP` and enter the domestic number in digits, keeping the leading zero. The command sends the digits as entered.
-
-Only the generated node ID, SDK token and device refresh token go to your Worker. It keeps them encrypted using `CREDENTIAL_ENCRYPTION_KEY`. The command keeps the account session in memory. An already paired Worker retains its current pairing. Register the existing side chat through MCP after authorization.
+The command gets the node ID from `begin_muse_pairing` and sends the node ID, SDK token and device refresh token to the Worker. The Worker encrypts them with `CREDENTIAL_ENCRYPTION_KEY`. Register the existing side chat through MCP after authorization.
 
 When the Worker imports credentials from the authorization command, it refreshes them with Muse before activating them. For a saved pairing, `begin_muse_pairing` reports the last refresh result. `unverified` means the Worker has yet to confirm the credentials. `verified` means a refresh succeeded. `rejected` means Muse refused the credentials.
-
-The authorization command uses the Muse account sign-in service and your SDK token. This sign-in interface can change. The local sign-in tests pass. A live SMS trial received HTTP 400 at the verification-code request, including with the phone region supplied. This verification-code sign-in remains unverified with a live account. The earlier Mac pairing flow completed with the Muse iPhone app and a local Worker. In a physical iPhone test, Muse rejected a gadget without an SDK token before displaying the Wi-Fi list. A verification code in that list cannot identify the phone before token release. The separate Bluetooth verification step has automated coverage and still needs an end-to-end iPhone test. [Muse Gadget SDK tokens](https://gadgets.muse.ai/settings/sdk-tokens)
 
 If the pairing upload acknowledgement is lost, the Mac checks which pairing the Worker saved. The Worker retries a failed write with the newly issued token. If the Worker stops before that token reaches durable storage and Muse has already invalidated the old token, renew the pairing with `--replace`.
 
@@ -45,7 +37,7 @@ The Worker encrypts saved Muse device tokens and Bluesky sessions with AES-256-G
 
 ## Renew device authorization
 
-To replace a revoked pairing, run `npm run authorize -- --replace` for the same Worker URL, then register the side chat again. Existing senders and connectors keep their URLs. Pending deliveries retain their original pairing. If you configured the three Muse secrets in Cloudflare, correct an incorrect SDK token there and redeploy. To switch from those secrets to a new pairing, first check that the Worker can open its saved credentials, then remove all three Muse secrets together, redeploy and run the replacement command.
+To replace a revoked pairing, open the pairing page for the same Worker URL and select **Replace existing pairing**, then register the side chat again. Existing senders and connectors keep their URLs. Pending deliveries retain their original pairing. If you configured the three Muse secrets in Cloudflare, correct an incorrect SDK token there and redeploy. To switch from those secrets to a new pairing, first check that the Worker can open its saved credentials, then remove all three Muse secrets together, redeploy and run the replacement command. For a terminal session, run `npm run pair -- --replace`.
 
 The Worker uses the standard device API at `api.muse.ai` and the encrypted Link gateway at `hatch.metaaivm.com`. If you set `MUSE_VM_ID`, check that a lease exists for that exact VM. Without an explicit VM, registration uses the default lease or the first available lease. Selecting a verified name again uses its saved VM. To move the name to the current default VM, call `register_side_chat` again with the name and session ID. [Gadget SDK device API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 

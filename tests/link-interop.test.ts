@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -168,28 +171,31 @@ test(
     const disappeared = await activate('Other')
     assert.equal(disappeared.isError, true)
     assert.match(JSON.stringify(disappeared.content), /not found/i)
-    const post = () =>
-      fetch(new URL('/v1/hooks/custom', worker.url), {
+    async function postAndWait(url: URL, key: string, body: string, contentType = 'text/plain') {
+      const post = () => fetch(new URL('/v1/hooks/custom', url), {
         method: 'POST',
         headers: {
           Authorization: 'Bearer HOOK_TOKEN-test',
-          'Content-Type': 'application/json',
-          'Idempotency-Key': 'interop',
+          'Content-Type': contentType,
+          'Idempotency-Key': key,
         },
-        body: '{\n  "id": 9007199254740993\n}\n',
+        body,
       })
-    const first = await post()
-    assert.equal(first.status, 202)
-    const receipt = await first.json()
-    const deadline = Date.now() + 10_000
-    let repeated
-    do {
-      await delay(50)
-      const duplicate = await post()
-      assert.equal(duplicate.status, 200)
-      repeated = await duplicate.json()
-    } while (['queued', 'sending'].includes(repeated.state) && Date.now() < deadline)
-    assert.deepEqual(repeated, { id: receipt.id, duplicate: true, state: 'sent' })
+      const first = await post()
+      assert.equal(first.status, 202)
+      const { id } = z.object({ id: z.uuid() }).parse(await first.json())
+      const deadline = Date.now() + 8_000
+      let repeated
+      do {
+        await delay(50)
+        const duplicate = await post()
+        assert.equal(duplicate.status, 200)
+        repeated = z.object({ id: z.uuid(), duplicate: z.boolean(), state: z.string() }).parse(await duplicate.json())
+      } while (['queued', 'sending'].includes(repeated.state) && Date.now() < deadline)
+      assert.deepEqual(repeated, { id, duplicate: true, state: 'sent' })
+      return id
+    }
+    await postAndWait(worker.url, 'interop', '{\n  "id": 9007199254740993\n}\n', 'application/json')
     const testPost = await admin.callTool({
       name: 'send_test_notification',
       arguments: { requestId: crypto.randomUUID() },
@@ -257,8 +263,37 @@ test(
     assert.equal(final.reason, 'side_chat_missing')
     const setup = await deletedAdmin.callTool({ name: 'get_setup_status' })
     assert.deepEqual(setup.structuredContent, { deviceConfigured: true, credentialStorageReady: true, active: null, ready: false })
-    assert.equal((await exited)[0], 0)
     assert.equal(accountRequests.filter(path => path === '/device_token/refresh').length, 2)
     assert.equal(accountRequests.filter(path => path === '/fetch_vms').length, 13)
+
+    await t.test('delivers both webhooks to the same side chat across a Worker restart', async (t) => {
+      const storage = await mkdtemp(join(tmpdir(), 'museknock-restart-'))
+      t.after(() => rm(storage, { recursive: true, force: true }))
+      const receipts = new Set<string>()
+      for (const [index, text] of ['Before restart', 'After restart'].entries()) {
+        const instance = await startWorker(outbound, { MUSE_VM_ID: 'local-vm' }, storage)
+        try {
+          if (index === 0) {
+            const client = await connect(new URL('/mcp', instance.url), 'MCP_ADMIN_TOKEN-test')
+            try {
+              const result = await client.callTool({
+                name: 'register_side_chat', arguments: { name: 'Notifications', sessionId: 'same-chat' },
+              })
+              assert.deepEqual(result.structuredContent, {
+                active: 'Notifications',
+                chats: [{ name: 'Notifications', sessionId: 'same-chat' }],
+              })
+            } finally {
+              await client.close()
+            }
+          }
+          receipts.add(await postAndWait(instance.url, 'restart-' + index, text))
+        } finally {
+          await instance.close()
+        }
+      }
+      assert.equal(receipts.size, 2)
+    })
+    assert.equal((await exited)[0], 0)
   },
 )

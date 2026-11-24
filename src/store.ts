@@ -140,7 +140,7 @@ export class DeliveryQueue {
     `)
   }
 
-  private activeTarget() {
+  getActiveSideChat(): SideChatTarget | undefined {
     return this.sql.exec<SideChatTarget>(
       'SELECT name, sessionId, vmId FROM side_chats WHERE destination = ? AND active = 1',
       this.destination,
@@ -158,7 +158,7 @@ export class DeliveryQueue {
     const chats = this.sql.exec<SideChat>(
       'SELECT name, sessionId FROM side_chats WHERE destination = ? ORDER BY name', this.destination,
     ).toArray()
-    return { active: this.activeTarget()?.name ?? null, chats }
+    return { active: this.getActiveSideChat()?.name ?? null, chats }
   }
 
   registerSideChat(name: string, sessionId: string, vmId: string): SideChats {
@@ -222,7 +222,7 @@ export class DeliveryQueue {
         if (grouped) return { ...grouped, duplicate: true }
       }
 
-      const target = this.activeTarget()
+      const target = this.getActiveSideChat()
       if (!target) return { noDestination: true }
 
       const { count } = this.sql

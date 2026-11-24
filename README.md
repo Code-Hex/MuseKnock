@@ -37,19 +37,14 @@ Prepare your Cloudflare and GitHub accounts, an existing Muse side chat and its 
 
 **2. Connect Muse.** In Muse **Settings → Connectors**, add one custom connector. Append `/mcp` to the deployed Worker URL, choose Bearer authentication, and enter `MCP_ADMIN_TOKEN` in the token field. [Muse connector guide](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
-**3. Start pairing from Muse.** Ask “Start MuseKnock pairing.” If the Worker reports `configured`, continue to step 4. For `rejected`, [renew the pairing](docs/operations.md#renew-device-authorization). For `awaiting_authorization`, open this repository on a Bluetooth-enabled Mac with Node.js 22.12 or later and [uv](https://docs.astral.sh/uv/getting-started/installation/). Sign in to Muse on your phone and run:
+**3. Start pairing from Muse.** Ask “Start MuseKnock pairing.” If the Worker reports `configured`, continue to step 4. For `rejected`, [renew the pairing](docs/operations.md#renew-device-authorization). For `awaiting_authorization`, open this repository on a Bluetooth-enabled Mac with Node.js 22.12 or later and [uv](https://docs.astral.sh/uv/getting-started/installation/). Sign in to Muse on your phone, then double-click **Pair MuseKnock.command** in Finder.
 
 The Mac is needed only for initial pairing. After the phone authorizes the Worker, Bluetooth discovery ends. Subsequent notifications use Muse Link over the internet.
 
-```sh
-npm ci
-npm run authorize -- --bluetooth
-```
+Enter the Worker URL, admin token and Gadget SDK token in the browser page that opens on your Mac. Click **Start pairing**. Keep the browser page and launcher window open until the Worker confirms it saved the pairing. The launcher installs the repository’s dependencies on first run. To pair from a terminal, run `npm ci` and `npm run pair`.
 
-Enter the Worker URL, admin token and Gadget SDK token in the Mac terminal. Keep it open until it confirms the pairing.
-
-1. On the iPhone you use for Muse, open a Bluetooth LE tool that can write characteristics, such as [nRF Connect](https://github.com/nordicsemi/IOS-nRF-Connect). Connect to the exact `MuseGadget…` name printed on the Mac.
-2. Open the service and verification characteristic shown in the terminal. Choose **Write with response** and enter the Mac’s 16-digit hexadecimal verification code. When the Mac displays **Phone verified**, disconnect the Bluetooth tool.
+1. On the iPhone you use for Muse, open a Bluetooth LE tool that can write characteristics, such as [nRF Connect](https://github.com/nordicsemi/IOS-nRF-Connect). Connect to the exact `MuseGadget…` name shown on the Mac.
+2. Open the service and verification characteristic shown on the Mac. Choose **Write with response** and enter the Mac’s 16-digit hexadecimal verification code. When the Mac displays **Phone verified**, disconnect the Bluetooth tool.
 3. On the same iPhone, open Muse **Settings → Devices**, enable **Allow community devices** (**Developer mode** on some versions), and tap **+**. Select **Muse Gadget** if prompted, then select the same gadget name. If Muse asks about Wi-Fi, choose **Use current connection**. Once the Worker confirms it saved the pairing, you can turn off the Mac. [Authorization details](docs/operations.md#authorize-a-device)
 
 **4. Register and test the chat from Muse.** You can ask the connector to do each step in plain language.

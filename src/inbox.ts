@@ -362,7 +362,7 @@ export class Inbox extends DurableObject<MuseBindings> {
 
   getSetupStatus() {
     const deviceConfigured = this.device !== null
-    const { active } = this.queue.listSideChats()
+    const active = this.queue.getActiveSideChat()?.name ?? null
     return {
       deviceConfigured,
       credentialStorageReady: this.credentialStorageReady,

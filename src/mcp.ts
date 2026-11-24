@@ -146,10 +146,12 @@ export async function handleMcp(
         return result({
           ...pairing,
           instructions: [
-            'On a Bluetooth-enabled Mac with Node.js and uv, open the MuseKnock repository and run npm ci.',
-            'Run npm run authorize -- --bluetooth' + (pairing.replaces ? ' --replace.' : '.'),
-            'Enter the Worker URL, admin token and Gadget SDK token in the terminal.',
-            'On your phone, use a Bluetooth LE tool to write the one-time code as directed by the terminal.',
+            'On a Bluetooth-enabled Mac with Node.js and uv, open the MuseKnock repository in Finder and double-click Pair MuseKnock.command.',
+            pairing.replaces ? 'Select Replace existing pairing on the local page.' : 'Select Start pairing on the local page after entering the credentials.',
+            'For the terminal alternative, install dependencies with npm ci first.',
+            pairing.replaces ? 'Run npm run pair -- --replace.' : 'Run npm run pair.',
+            'Enter the Worker URL, admin token and Gadget SDK token in the local pairing interface.',
+            'On your phone, use a Bluetooth LE tool to write the one-time code shown on the Mac.',
             'When the Mac confirms the phone, disconnect the tool and select the printed gadget name in the Muse app on that phone.',
             'Then register your existing side chat through MCP.',
           ].join(' '),

@@ -37,19 +37,14 @@ flowchart LR
 
 **2. 连接 Muse。** 在 Muse 的 **Settings → Connectors** 中添加一个自定义连接器。在已部署 Worker 的 URL 后加上 `/mcp`，选择 Bearer 身份验证，将 `MCP_ADMIN_TOKEN` 填入令牌栏。[Muse 连接器指南](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
-**3. 请 Muse 开始配对。** 如果返回 `configured`，请继续第 4 步。如果返回 `rejected`，请先[更新配对](docs/operations.zh-CN.md#更新设备授权)。如果返回 `awaiting_authorization`，请在手机上登录 Muse，并在支持蓝牙的 Mac 上打开此仓库。安装 Node.js 22.12 或更高版本和 [uv](https://docs.astral.sh/uv/getting-started/installation/)，然后运行以下命令。
+**3. 请 Muse 开始配对。** 如果返回 `configured`，请继续第 4 步。如果返回 `rejected`，请先[更新配对](docs/operations.zh-CN.md#更新设备授权)。如果返回 `awaiting_authorization`，请在手机上登录 Muse，并在支持蓝牙的 Mac 上打开此仓库。安装 Node.js 22.12 或更高版本和 [uv](https://docs.astral.sh/uv/getting-started/installation/)，然后在访达中双击 **Pair MuseKnock.command**。
 
 仅首次授权需要 Mac。手机授权完成后，Mac 会停止蓝牙广播，之后由 Worker 通过互联网上的 Muse Link 投递通知。
 
-```sh
-npm ci
-npm run authorize -- --bluetooth
-```
-
-在 Mac 终端输入 Worker 地址、管理令牌和 Gadget SDK 令牌。保持终端打开，直到配对完成。
+在 Mac 上打开的浏览器页面中输入 Worker 地址、管理令牌和 Gadget SDK 令牌，然后点击 **Start pairing**。保持页面和启动窗口打开，直到 Worker 确认保存配对。启动器会在首次运行时安装依赖项。也可在终端运行 `npm ci` 和 `npm run pair`。
 
 1. 在使用 Muse 的 iPhone 上打开支持写入特征值的蓝牙 LE 工具，例如 [nRF Connect](https://github.com/nordicsemi/IOS-nRF-Connect)。连接到与 Mac 上显示的 `MuseGadget…` 名称完全相同的设备。
-2. 打开终端显示的服务和验证特征，选择 **Write with response**，写入 Mac 上显示的 16 位十六进制验证码。Mac 显示 **Phone verified** 后，在蓝牙工具中断开连接。
+2. 打开Mac 上显示的服务和验证特征，选择 **Write with response**，写入 Mac 上显示的 16 位十六进制验证码。Mac 显示 **Phone verified** 后，在蓝牙工具中断开连接。
 3. 在同一部 iPhone 的 Muse 中打开 **Settings → Devices**，启用 **Allow community devices**（部分版本称为 **Developer mode**），然后点击 **＋**。如果需要选择类型，请选 **Muse Gadget**，再选同一设备名称。如果 Muse 询问 Wi-Fi，请选 **Use current connection**。Worker 确认保存配对后，即可关闭 Mac。[授权详情](docs/operations.zh-CN.md#首次授权设备)
 
 **4. 通过 Muse 注册对话并测试投递。** 可以按顺序向连接器提出以下请求。

@@ -1,15 +1,28 @@
+import { execFile } from 'node:child_process'
 import { createInterface } from 'node:readline/promises'
 import { Writable } from 'node:stream'
-import { parseArgs } from 'node:util'
+import { parseArgs, promisify } from 'node:util'
 import { z } from 'zod'
+import { museDeviceSchema } from '../src/muse-device.ts'
 import { beginPairing, uploadPairing } from './worker-pairing.ts'
 import { pairMac } from './mac-pairing.ts'
-import { signIn } from './muse-login.ts'
+import { startPairingPage } from './pair-browser.ts'
 
-async function authorize() {
-  const { values: { replace, region, bluetooth } } = parseArgs({
-    options: { replace: { type: 'boolean', default: false }, region: { type: 'string' }, bluetooth: { type: 'boolean' } },
+async function pair() {
+  const { values: { replace, browser } } = parseArgs({
+    options: { replace: { type: 'boolean', default: false }, browser: { type: 'boolean' } },
   })
+  if (process.platform !== 'darwin') throw new Error('Run npm run pair on a Bluetooth-enabled Mac.')
+  if (browser) {
+    const page = await startPairingPage(replace)
+    console.log('Open ' + page.url.href + ' to pair. Keep this window open until pairing finishes.')
+    try {
+      await promisify(execFile)('/usr/bin/open', [page.url.href])
+    } catch {
+      console.error('Open the address above in your browser.')
+    }
+    return
+  }
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Open a private interactive terminal to authorize MuseKnock.')
   let hidden = false
   const output = new Writable({
@@ -47,26 +60,23 @@ async function authorize() {
     const pairing = await beginPairing(connection, replace)
     if (pairing.state === 'configured') {
       if (pairing.verification === 'rejected')
-        throw new Error('Muse rejected the saved credentials. Correct the dashboard secrets or run npm run authorize -- --replace for a stored pairing.')
+        throw new Error('Muse rejected the saved credentials. Correct the dashboard secrets or run npm run pair -- --replace for a stored pairing.')
       console.log(pairing.verification === 'verified'
         ? 'The Worker has previously refreshed this pairing. Continue with side chat registration in Muse.'
         : 'The Worker has saved credentials. Register an existing side chat in Muse to verify them.')
       return
     }
 
-    if (bluetooth) {
-      await pairMac(pairing.nodeId, prompt, (device, lifetime) =>
-        uploadPairing(connection, device, pairing.replaces, lifetime), cancelled.signal)
-    } else {
-      const device = await signIn(pairing.nodeId, prompt, cancelled.signal, { region })
-      await uploadPairing(connection, device, pairing.replaces)
-    }
+    const sdkToken = await prompt('Muse Gadget SDK token: ', true)
+    if (!museDeviceSchema.shape.sdkToken.safeParse(sdkToken).success) throw new Error('Invalid SDK token format.')
+    await pairMac({ nodeId: pairing.nodeId, sdkToken }, (device, lifetime) =>
+      uploadPairing(connection, device, pairing.replaces, lifetime), cancelled.signal)
     console.log('Pairing saved in your Worker. Register your existing side chat through the Muse MCP connector.')
   } finally {
     terminal.close()
   }
 }
-authorize().catch(error => {
+pair().catch(error => {
   console.error(error instanceof z.ZodError ? 'The server returned an unexpected authentication response.' :
     error instanceof Error ? error.message : 'Authorization failed.')
   process.exitCode = 1

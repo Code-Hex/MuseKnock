@@ -1,5 +1,4 @@
-import type { Hono, MiddlewareHandler } from 'hono'
-import { bodyLimit } from 'hono/body-limit'
+import type { Handler } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { identifier } from './identifiers.ts'
 import type { Inbox, MuseBindings } from './inbox.ts'
@@ -45,33 +44,25 @@ async function decodeText(request: Request): Promise<string> {
   throw new HTTPException(415, { message: 'Expected JSON, text/plain or URL-encoded form' })
 }
 
-export function registerWebhook(
-  app: Hono<WorkerEnv>,
-  source: string,
-  middleware: [MiddlewareHandler<WorkerEnv>, ...MiddlewareHandler<WorkerEnv>[]],
-  decode: (request: Request) => Promise<string> = decodeText,
-) {
-  if (!identifier.test(source)) throw new Error('Invalid webhook name')
-  app.post('/v1/hooks/' + source, bodyLimit({ maxSize: 32 * 1024 }), ...middleware, async (c) => {
-    const type = c.req.header('X-Event-Type') ?? 'notification'
-    const key = c.req.header('Idempotency-Key') ?? crypto.randomUUID()
-    if (!identifier.test(type) || !/^[!-~]{1,128}$/.test(key)) {
-      return c.text('Invalid X-Event-Type or Idempotency-Key', 400)
-    }
-    const text = await decode(c.req.raw)
-    if (!text.trim()) return c.text('Empty event', 400)
-    if (new TextEncoder().encode(text).length > 32 * 1024) return c.text('Event too large', 413)
-    const parentId = c.req.header('X-MuseKnock-Parent')?.toLowerCase()
-    const receipt = await inbox(c.env).enqueue({ source, key, type, text, parentId })
-    if ('invalidBreaker' in receipt) return c.text('Correct CIRCUIT_BREAKER and retry', 503)
-    if ('credentialStorageUnavailable' in receipt)
-      return c.text('Credential storage is unavailable', 503)
-    if ('missingDevice' in receipt) return c.text('Configure the Muse device first', 503)
-    if ('noDestination' in receipt) return c.text('Register a destination side chat first', 503)
-    if ('limited' in receipt) {
-      c.header('Retry-After', '60')
-      return c.text('Source rate limit reached', 429)
-    }
-    return c.json(receipt, receipt.duplicate ? 200 : 202)
-  })
+export const customWebhook: Handler<WorkerEnv> = async (c) => {
+  const type = c.req.header('X-Event-Type') ?? 'notification'
+  const key = c.req.header('Idempotency-Key') ?? crypto.randomUUID()
+  if (!identifier.test(type) || !/^[!-~]{1,128}$/.test(key)) {
+    return c.text('Invalid X-Event-Type or Idempotency-Key', 400)
+  }
+  const text = await decodeText(c.req.raw)
+  if (!text.trim()) return c.text('Empty event', 400)
+  if (new TextEncoder().encode(text).length > 32 * 1024) return c.text('Event too large', 413)
+  const parentId = c.req.header('X-MuseKnock-Parent')?.toLowerCase()
+  const receipt = await inbox(c.env).enqueue({ source: 'custom', key, type, text, parentId })
+  if ('invalidBreaker' in receipt) return c.text('Correct CIRCUIT_BREAKER and retry', 503)
+  if ('credentialStorageUnavailable' in receipt)
+    return c.text('Credential storage is unavailable', 503)
+  if ('missingDevice' in receipt) return c.text('Configure the Muse device first', 503)
+  if ('noDestination' in receipt) return c.text('Register a destination side chat first', 503)
+  if ('limited' in receipt) {
+    c.header('Retry-After', '60')
+    return c.text('Source rate limit reached', 429)
+  }
+  return c.json(receipt, receipt.duplicate ? 200 : 202)
 }

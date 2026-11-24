@@ -14,7 +14,7 @@ export async function beginPairing(
   { worker, admin, signal, transport: request = fetch }: WorkerConnection,
   replace = false,
 ) {
-  const client = new Client({ name: 'museknock-authorize', version: '0.1.0' })
+  const client = new Client({ name: 'museknock-pair', version: '0.1.0' })
   const transport = new StreamableHTTPClientTransport(new URL('/mcp', worker), {
     requestInit: { headers: { Authorization: 'Bearer ' + admin } },
     fetch: (url, init) => {
@@ -47,8 +47,8 @@ export async function beginPairing(
 export async function uploadPairing(
   connection: WorkerConnection,
   device: MuseDevice,
-  replaces?: string,
-  lifetime = connection.signal,
+  replaces: string | undefined,
+  lifetime: AbortSignal,
 ) {
   const { worker, admin, signal, transport = fetch } = connection
   const uploadSignal = AbortSignal.any([signal, lifetime])

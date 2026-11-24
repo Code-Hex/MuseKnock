@@ -14,7 +14,7 @@ import { telegram } from './providers/telegram.ts'
 import { twilio } from './providers/twilio.ts'
 import { wecom } from './providers/wecom.ts'
 import { x } from './providers/x.ts'
-import { inbox, registerWebhook, type WorkerEnv } from './webhook.ts'
+import { customWebhook, inbox, type WorkerEnv } from './webhook.ts'
 
 export { Inbox } from './inbox.ts'
 
@@ -39,10 +39,13 @@ registerProvider(app, 'twilio', twilio)
 registerProvider(app, 'wecom', wecom, ['GET', 'POST'])
 registerProvider(app, 'x', x, ['GET', 'POST'])
 
-registerWebhook(app, 'custom', [
+app.post(
+  '/v1/hooks/custom',
+  bodyLimit({ maxSize: 32 * 1024 }),
   checkTokenRoles,
-  bearerAuth({ verifyToken: (token, c) => matches(token, c.env.HOOK_TOKEN) }),
-])
+  bearerAuth<WorkerEnv>({ verifyToken: (token, c) => matches(token, c.env.HOOK_TOKEN) }),
+  customWebhook,
+)
 
 const pairingInput = museDeviceSchema.omit({ access: true }).extend({
   replaces: z.string().regex(/^[0-9a-f]{64}$/).optional(),

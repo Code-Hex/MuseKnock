@@ -39,6 +39,7 @@ async def verify(socket, events, lookups):
     registration = await vm.next_message()
     assert registration["method"] == "link.register"
     assert registration["params"]["node_id"] == "test-123abc"
+    assert registration["params"]["device_family"] == "gadget"
     assert registration["params"]["commands_v2"] == {}
     reject = socket.request.path == "/reject-registration"
     await vm.send_message({"type": "res", "id": registration["id"], "ok": not reject})
@@ -124,6 +125,8 @@ async def main():
         {"source": "museknock-test", "type": "test", "text": "MuseKnock test notification."},
         {"source": "telegram", "type": "edited_channel_post",
          "text": '{"message_id":3,"chat":{"id":-7},"caption":"Release ready"}'},
+        {"source": "custom", "type": "notification", "text": "Before restart"},
+        {"source": "custom", "type": "notification", "text": "After restart"},
     ])
 
     async def handle(socket):
@@ -137,7 +140,7 @@ async def main():
 
     async with serve(handle, "127.0.0.1", 0, compression=None) as server:
         print(server.sockets[0].getsockname()[1], flush=True)
-        for _ in range(26):
+        for _ in range(29):
             error = await finished.get()
             if error:
                 raise error

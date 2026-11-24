@@ -4,21 +4,13 @@
 
 ## 初回の端末認証
 
-Mac とスマホでペアリングする場合は、Mac 上で `npm run authorize -- --bluetooth` を実行します。uv が macOS の Bluetooth バインディングとバージョン固定の Muse SDK ペアリング実装を用意し、スマホの Muse アプリが Worker 用の端末を認可します。同じ Worker の認可を更新するときは `--replace` を追加します。以下の確認コード方式は、Muse がコードでのログインを許可しているアカウントで使えます。 スマホを確認する操作は[クイックスタート](../README.ja.md#クイックスタート)を参照してください。
+Bluetooth 対応の Mac で `Pair MuseKnock.command` を開き、スマホの Muse で認可します。uv が macOS の Bluetooth バインディングとバージョン固定の Muse Gadget SDK を用意します。操作は[クイックスタート](../README.ja.md#クイックスタート)を参照してください。
 
-この Worker に使う有効なペアリング情報がすでに揃っている場合は、Cloudflare の **Settings → Variables and Secrets** で、同じペアリングの `MUSE_NODE_ID`、`MUSE_SDK_TOKEN`、`MUSE_REFRESH_TOKEN` をシークレットとしてまとめて設定し、デプロイします。管理用 MCP で `begin_muse_pairing` が `configured` を返したら、サイドチャットの登録に進めます。以下のコマンドはペアリングを新規作成する場合に使います。
+この Worker に使う有効なペアリング情報がすでに揃っている場合は、Cloudflare の **Settings → Variables and Secrets** で、同じペアリングの `MUSE_NODE_ID`、`MUSE_SDK_TOKEN`、`MUSE_REFRESH_TOKEN` をシークレットとしてまとめて設定し、デプロイします。管理用 MCP で `begin_muse_pairing` が `configured` を返したら、サイドチャットの登録に進めます。
 
-管理用 MCP ツール `begin_muse_pairing` は、Worker の Durable Object の識別子からノード ID を決定します。認証コマンドも同じツールを呼ぶため、ノード ID を転記する必要はありません。確認コードは専用のターミナルに入力します。
-
-MuseKnock のリポジトリを自分専用のターミナルまたは個人用 Codespace で開きます。デプロイ後に `npm ci` と `npm run authorize` を実行し、自分の Worker の HTTPS URL、`MCP_ADMIN_TOKEN`、SDK トークン、メールアドレスまたは電話番号を入力します。確認コードを入力し、Muse が求める場合はアカウント選択・二要素認証を完了してください。追加の本人確認が必要な場合は Muse アプリで済ませてからやり直します。
-
-SMS でサインインする場合は、電話番号の国・地域を英字2文字で指定できます。日本の携帯番号では `npm run authorize -- --region JP` を実行し、先頭の 0 を含む国内形式の番号をハイフンなしで入力します。番号は入力した形式のまま送られます。
-
-Worker に渡すのは生成したノード ID、SDK トークン、端末の更新トークンです。Worker はこれらを `CREDENTIAL_ENCRYPTION_KEY` で暗号化して保存します。アカウントのセッションは認証コマンドのメモリ内でのみ扱います。認証済みの Worker で再実行すると既存のペアリングを維持します。認証後、MCP から投稿先のサイドチャットを登録します。
+コマンドは `begin_muse_pairing` からノード ID を取得し、ノード ID、SDK トークン、端末の更新トークンを Worker に渡します。Worker は `CREDENTIAL_ENCRYPTION_KEY` で暗号化して保存します。認可後は MCP から既存のサイドチャットを登録します。
 
 認証コマンドから受け取った情報は、Worker が Muse でトークンを更新できてから有効にします。保存済みのペアリングでは、`begin_muse_pairing` が直近の更新結果を返します。`unverified` は未確認、`verified` は更新成功、`rejected` は Muse が認証情報を拒否したことを示します。
-
-認証コマンドは Muse アカウントのサインインサービスと SDK トークンを使います。この認証インターフェースは変更される可能性があります。ローカルの認証テストは通っています。実アカウントの SMS 試行では、電話番号の地域を指定しても確認コードの送信要求が HTTP 400 になりました。確認コード方式の完了は実アカウントで未確認です。従来の Bluetooth 手順では iPhone の Muse とローカル Worker で配信まで確認しました。iPhone 実機では SDK トークンのないガジェットへの接続を Muse が拒否し、Wi-Fi 一覧は表示されませんでした。その一覧の確認コードを使ってトークン送信前に端末を識別することはできません。BLE ツールで端末を確認する手順は自動テストで検証しており、実機での通し確認は未実施です。 [Muse Gadget SDK tokens](https://gadgets.muse.ai/settings/sdk-tokens)
 
 保存応答が途切れたときは、Mac が Worker に登録されたペアリングを照合します。トークン更新後の書き込みが失敗した場合は、Worker が新しいトークンの保存を再試行します。永続化前に Worker が停止し、Muse 側でも旧トークンが失効していた場合は、`--replace` で再認可します。
 
@@ -45,7 +37,7 @@ Worker は Muse の端末トークンと Bluesky のセッションを AES-256-G
 
 ## 端末認証を更新する
 
-失効したペアリングは、同じ Worker URL に対して `npm run authorize -- --replace` を実行し、サイドチャットを登録し直します。通知元とコネクタには同じ URL を使えます。配信待ちの通知は元のペアリングに紐づきます。Cloudflare に Muse の3つのシークレットを設定していて SDK トークンだけが誤っている場合は、その値を訂正して再デプロイします。3つのシークレットを使う構成から新しいペアリングに切り替える場合は、Worker が保存済みの認証情報を読み込めることを確認し、3つをまとめて削除して再デプロイしてから再認証します。
+失効したペアリングは、同じ Worker URL をペアリング画面に入力し、**Replace existing pairing** を選んで認可してから、サイドチャットを登録し直します。通知元とコネクタには同じ URL を使えます。配信待ちの通知は元のペアリングに紐づきます。Cloudflare に Muse の3つのシークレットを設定していて SDK トークンだけが誤っている場合は、その値を訂正して再デプロイします。3つのシークレットを使う構成から新しいペアリングに切り替える場合は、Worker が保存済みの認証情報を読み込めることを確認し、3つをまとめて削除して再デプロイしてから再認証します。 ターミナルから行う場合は `npm run pair -- --replace` を使います。
 
 Worker は標準の端末 API `api.muse.ai` と暗号化された Link ゲートウェイ `hatch.metaaivm.com` を使用します。`MUSE_VM_ID` を指定した場合は、その VM が端末に貸与されていることを確認してください。指定がなければ、登録時に既定の VM を選び、既定がなければ一覧の先頭を使います。登録済みの名前を選び直すと、登録時の VM でチャットを確認します。現在の既定 VM に移すには、同じ名前とセッション ID で `register_side_chat` を呼び出してください。[Gadget SDK の端末 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 

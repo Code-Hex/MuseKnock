@@ -4,21 +4,13 @@
 
 ## 首次授权设备
 
-使用 Mac 和手机配对时，请在 Mac 上运行 `npm run authorize -- --bluetooth`。uv 会安装 macOS 蓝牙绑定和固定版本的 Muse SDK 配对协议实现。手机上的 Muse 应用为此 Worker 授权新设备。更新同一 Worker 的配对时，添加 `--replace`。如果 Muse 允许你的账户使用验证码登录，也可使用下面的验证码方式。 手机验证步骤见[快速开始](../README.zh-CN.md#快速开始)。
+在支持蓝牙的 Mac 上打开 `Pair MuseKnock.command`，然后在手机上的 Muse 中授权。uv 会安装 macOS 蓝牙绑定和固定版本的 Muse Gadget SDK。操作步骤见[快速开始](../README.zh-CN.md#快速开始)。
 
-如果已有供此 Worker 使用的有效配对，可在 Cloudflare 的 **Settings → Variables and Secrets** 中将同一配对的 `MUSE_NODE_ID`、`MUSE_SDK_TOKEN` 和 `MUSE_REFRESH_TOKEN` 一起设为密钥并部署。通过管理 MCP 调用 `begin_muse_pairing`，返回 `configured` 后即可注册侧边对话。以下命令用于创建新配对。
+如果已有供此 Worker 使用的有效配对，可在 Cloudflare 的 **Settings → Variables and Secrets** 中将同一配对的 `MUSE_NODE_ID`、`MUSE_SDK_TOKEN` 和 `MUSE_REFRESH_TOKEN` 一起设为密钥并部署。通过管理 MCP 调用 `begin_muse_pairing`，返回 `configured` 后即可注册侧边对话。
 
-管理 MCP 工具 `begin_muse_pairing` 根据 Worker 的 Durable Object 标识确定节点 ID。授权命令调用同一工具，无需手动复制节点 ID。请在个人终端中输入验证码。
-
-在个人终端或专用 Codespace 中打开 MuseKnock 仓库。部署后，运行 `npm ci` 和 `npm run authorize`。输入自己的 Worker HTTPS 地址、`MCP_ADMIN_TOKEN`、SDK 令牌，以及账户邮箱或手机号。输入验证码，根据 Muse 的提示选择账户并完成双重验证。如需额外的身份验证，请先在 Muse 应用中完成，再重新运行命令。
-
-使用短信登录时，可用两位字母指定手机号所属的国家或地区。使用日本手机号时，运行 `npm run authorize -- --region JP`，按国内号码格式输入数字，保留开头的 0，不加连字符。命令会按输入的格式发送号码。
-
-发送到 Worker 的只有生成的节点 ID、SDK 令牌和设备刷新令牌。Worker 使用 `CREDENTIAL_ENCRYPTION_KEY` 加密保存这些值。账户会话只在命令的内存中使用。再次运行命令会保留 Worker 已有的配对。授权后，通过 MCP 注册目标侧边对话。
+命令通过 `begin_muse_pairing` 获取节点 ID，然后将节点 ID、SDK 令牌和设备刷新令牌发送给 Worker。Worker 使用 `CREDENTIAL_ENCRYPTION_KEY` 加密保存这些凭据。授权后，通过 MCP 注册已有的侧边对话。
 
 Worker 会先向 Muse 刷新授权命令提交的凭据，再启用配对。对于已保存的配对，`begin_muse_pairing` 返回上次刷新结果。`unverified` 表示尚未验证，`verified` 表示刷新成功，`rejected` 表示 Muse 拒绝了凭据。
-
-授权命令使用 Muse 的账户登录服务和 SDK 令牌。该登录接口可能会变更。本地登录测试通过。在真实账户的短信测试中，即使指定了手机号所属地区，请求验证码时仍返回 HTTP 400。尚未使用真实账户完成验证码登录。此前的蓝牙流程已在 iPhone 的 Muse 应用和本地 Worker 上完成配对与投递。在 iPhone 真机测试中，Muse 在显示 Wi-Fi 列表之前就拒绝了没有 SDK 令牌的设备。因此无法用列表中的验证码在发送令牌前确认手机。独立的蓝牙验证步骤已有自动化测试，尚待真机端到端验证。 [Muse Gadget SDK tokens](https://gadgets.muse.ai/settings/sdk-tokens)
 
 如果上传配对信息后未收到确认，Mac 会核对 Worker 保存的配对。写入失败时，Worker 会重试保存新令牌。如果 Worker 在写入持久存储前停止，而 Muse 已使旧令牌失效，请使用 `--replace` 重新授权。
 
@@ -45,7 +37,7 @@ Worker 使用 AES-256-GCM 加密保存的 Muse 设备令牌和 Bluesky 会话。
 
 ## 更新设备授权
 
-配对失效时，对同一 Worker 地址运行 `npm run authorize -- --replace`，然后重新注册侧边对话。事件来源和连接器继续使用原地址，待投递的通知仍属于原配对。如果在 Cloudflare 设置了三个 Muse 密钥，而只有 SDK 令牌有误，请直接更正并重新部署。如需将此配置切换为新配对，请先确认 Worker 能读取已保存的凭据，再同时移除三个 Muse 密钥，重新部署并运行替换命令。
+配对失效时，在配对页面输入同一 Worker 地址并选中 **Replace existing pairing**，然后重新注册侧边对话。事件来源和连接器继续使用原地址，待投递的通知仍属于原配对。如果在 Cloudflare 设置了三个 Muse 密钥，而只有 SDK 令牌有误，请直接更正并重新部署。如需将此配置切换为新配对，请先确认 Worker 能读取已保存的凭据，再同时移除三个 Muse 密钥，重新部署并运行替换命令。 也可在终端运行 `npm run pair -- --replace`。
 
 Worker 使用标准设备 API `api.muse.ai` 和加密的 Link 网关 `hatch.metaaivm.com`。如果设置了 `MUSE_VM_ID`，请确认该 VM 已分配给设备。未指定时，注册对话会使用默认 VM，没有默认项则使用列表中的第一项。重新选择已验证的名称时，Worker 会在注册时保存的 VM 上查找对话。要将该名称迁移到当前默认 VM，请使用相同的名称和会话 ID 再次调用 `register_side_chat`。[Gadget SDK 设备 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 

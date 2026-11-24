@@ -37,19 +37,14 @@ Cloudflare と GitHub のアカウント、既存の Muse サイドチャット�
 
 **2. Muse にコネクタを追加します。** Muse の **Settings → Connectors** でカスタムコネクタを1つ追加します。デプロイ先の URL の末尾に `/mcp` を付け、認証方式に Bearer を選び、トークン欄に `MCP_ADMIN_TOKEN` を入力します。[Muse コネクタの設定手順](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
-**3. Muse に「MuseKnock のペアリングを開始して」と頼みます。** `configured` なら手順4に進みます。`rejected` なら[ペアリングを更新](docs/operations.ja.md#端末認証を更新する)します。`awaiting_authorization` なら、スマホの Muse にログインし、Bluetooth 対応の Mac でこのリポジトリを開きます。Node.js 22.12 以降と [uv](https://docs.astral.sh/uv/getting-started/installation/) を用意して実行します。
+**3. Muse に「MuseKnock のペアリングを開始して」と頼みます。** `configured` なら手順4に進みます。`rejected` なら[ペアリングを更新](docs/operations.ja.md#端末認証を更新する)します。`awaiting_authorization` なら、スマホの Muse にログインし、Bluetooth 対応の Mac でこのリポジトリを開きます。Node.js 22.12 以降と [uv](https://docs.astral.sh/uv/getting-started/installation/) を用意し、Finder で **Pair MuseKnock.command** をダブルクリックします。
 
 Mac を使うのは初回の認可時だけです。スマホからの認可が完了すると Bluetooth の広告は終了し、以降の通知は Worker がインターネット経由の Muse Link で届けます。
 
-```sh
-npm ci
-npm run authorize -- --bluetooth
-```
-
-Mac のターミナルに Worker URL、管理用トークン、Gadget SDK トークンを入力します。ペアリングが完了するまでターミナルを開いておきます。
+Mac のブラウザに開いたページで Worker URL、管理用トークン、Gadget SDK トークンを入力し、**Start pairing** を押します。Worker への保存が完了するまでブラウザと起動用のウィンドウを開いておきます。初回はランチャーが依存関係をインストールします。ターミナルでペアリングする場合は `npm ci` と `npm run pair` を実行します。
 
 1. Muse で使う iPhone に、特性への書き込みができる Bluetooth LE ツールを用意します。[nRF Connect](https://github.com/nordicsemi/IOS-nRF-Connect) などで、Mac に表示された `MuseGadget…` と同じ名前のデバイスに接続します。
-2. ターミナルに表示されたサービスと確認用の特性を開きます。**Write with response** を選び、Mac に表示された16桁の16進確認コードを書き込みます。Mac に **Phone verified** と表示されたら、Bluetooth ツールを切断します。
+2. Mac に表示されたサービスと確認用の特性を開きます。**Write with response** を選び、Mac に表示された16桁の16進確認コードを書き込みます。Mac に **Phone verified** と表示されたら、Bluetooth ツールを切断します。
 3. 同じ iPhone の Muse で **設定 → デバイス → コミュニティデバイスを許可**（一部のバージョンでは **Developer mode**）を有効にし、**＋** を開きます。種類を聞かれたら **Muse Gadget** を選び、同じデバイス名に接続します。Wi-Fi の選択画面では **Use current connection** を選びます。Worker への保存が完了したら Mac の電源を切れます。[認証の詳細](docs/operations.ja.md#初回の端末認証)
 
 **4. Muse に投稿先の登録とテストを頼みます。** 次の順に依頼してください。

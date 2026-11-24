@@ -18,14 +18,11 @@ const event = z.union([
 ])
 
 export async function pairMac(
-  nodeId: string,
-  prompt: (label: string, hidden?: boolean) => Promise<string>,
+  { nodeId, sdkToken }: Pick<MuseDevice, 'nodeId' | 'sdkToken'>,
   save: (device: MuseDevice, lifetime: AbortSignal) => Promise<void>,
   signal: AbortSignal,
+  report: (message: string) => void = console.log,
 ) {
-  if (process.platform !== 'darwin') throw new Error('Run Bluetooth pairing on the Mac next to your phone.')
-  const sdkToken = await prompt('Muse Gadget SDK token: ', true)
-  if (!museDeviceSchema.shape.sdkToken.safeParse(sdkToken).success) throw new Error('Invalid SDK token format.')
   const path = fileURLToPath(new URL('./pair-mac.py', import.meta.url))
   const child = spawn('uv', ['run', '--script', path], { stdio: ['pipe', 'pipe', 'inherit'], signal })
   const lifetime = new AbortController()
@@ -47,13 +44,13 @@ export async function pairMac(
       }
       const message = event.parse(raw)
       if ('advertising' in message) {
-        console.log('Open a Bluetooth LE reader on your iPhone (such as nRF Connect). Connect to ' + message.advertising + '.')
-        console.log('Open service ' + message.service + ', then write to the MuseKnock verification characteristic ' + message.characteristic + '.')
-        console.log('Choose Write with response. Enter this one-time value as hex bytes or as UTF-8 text: ' + message.proof.toUpperCase())
+        report('Open a Bluetooth LE reader on your iPhone (such as nRF Connect). Connect to ' + message.advertising + '.')
+        report('Open service ' + message.service + ', then write to the MuseKnock verification characteristic ' + message.characteristic + '.')
+        report('Choose Write with response. Enter this one-time value as hex bytes or as UTF-8 text: ' + message.proof.toUpperCase())
       } else if ('verified' in message) {
-        console.log('Phone verified. Disconnect the Bluetooth reader, then open Muse → Settings → Devices → Allow community devices → Add Device → Muse Gadget. Select the same gadget. At the Wi-Fi list, select “Use current connection”.')
+        report('Phone verified. Disconnect the Bluetooth reader, then open Muse → Settings → Devices → Allow community devices → Add Device → Muse Gadget. Select the same gadget. At the Wi-Fi list, select “Use current connection”.')
       } else if ('progress' in message) {
-        console.log('Bluetooth: ' + message.progress)
+        report('Bluetooth: ' + message.progress)
       } else {
         if (saved) throw new Error('The Mac received a second pairing.')
         await save({ nodeId, sdkToken, refreshToken: message.refreshToken }, lifetime.signal)
