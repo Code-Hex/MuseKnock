@@ -202,6 +202,13 @@ export class DeliveryQueue {
     })
   }
 
+  abandonPending() {
+    this.sql.exec(
+      "UPDATE events SET state = 'suppressed', text = '', reason = 'destination_changed' WHERE state = 'queued' AND destination = ?",
+      this.destination,
+    )
+  }
+
   enqueue(event: HookEvent): Receipt {
     if (this.invalidBreaker) return { invalidBreaker: true }
     return this.storage.transactionSync(() => {

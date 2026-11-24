@@ -1,14 +1,17 @@
 import type { BlueskySession } from './bluesky-notifications.ts'
+import type { BrowserSetupSession } from './browser-setup.ts'
 import { museDeviceSchema, type MuseDevice } from './muse-device.ts'
 
 type Storage = {
   get<T>(name: string): Promise<T | undefined>
   put<T>(name: string, value: T): Promise<void>
+  delete?(name: string): Promise<boolean>
   list<T>(options: { prefix: string; limit: number }): Promise<Map<string, T>>
 }
 
 type Records = {
   [pairing: `device:${string}`]: MuseDevice
+  [setup: `browser:${string}`]: BrowserSetupSession
   'bluesky-notifications.session': { fingerprint: string; session: BlueskySession }
 }
 
@@ -90,5 +93,10 @@ export class CredentialStore {
     record.set(iv)
     record.set(new Uint8Array(ciphertext), ivSize)
     await this.storage.put(slot, record.buffer)
+  }
+
+  async delete<K extends keyof Records>(name: K) {
+    if (!this.storage.delete) throw new CredentialStoreError('Credential deletion unavailable')
+    await this.storage.delete(prefix + name)
   }
 }

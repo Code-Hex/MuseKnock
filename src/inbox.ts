@@ -1,12 +1,14 @@
 import { DurableObject } from 'cloudflare:workers'
 import { pollBluesky, type BlueskyCheckpoint } from './bluesky.ts'
 import { pollBlueskyNotifications } from './bluesky-notifications.ts'
+import { advanceWebLogin, beginWebLogin, browserSetupError, type BrowserSetupSession } from './browser-setup.ts'
+import type { BrowserSetupView } from './browser-setup-page.ts'
 import { createCircuitBreaker } from './circuit-breaker.ts'
 import { CredentialStore, CredentialStoreError } from './credential-store.ts'
 import { pollDiscord, type DiscordCheckpoint } from './discord.ts'
 import { sendSideChat, sideChatExists, type Vm } from './link/chat.ts'
 import { getMuseVms, MuseCredentialRejected, refreshMuseDevice } from './muse-account.ts'
-import { bootstrapDevice, pairingFingerprint, type MuseDevice, type MuseDeviceBindings } from './muse-device.ts'
+import { bootstrapDevice, museDeviceSchema, pairingFingerprint, sideChatId, type MuseDevice, type MuseDeviceBindings } from './muse-device.ts'
 import { DeliveryQueue, type HookEvent } from './store.ts'
 import type { BatchResult, Claim, Outcome } from './delivery.ts'
 
@@ -29,6 +31,7 @@ export class Inbox extends DurableObject<MuseBindings> {
   private leaseLookup?: ReturnType<typeof getMuseVms>
   private activePoll?: Promise<void>
   private credentialUpdates: Promise<void> = Promise.resolve()
+  private browserUpdates: Promise<void> = Promise.resolve()
   private unsavedRotation?: { pairing: string; device: Awaited<ReturnType<typeof refreshMuseDevice>> }
 
   constructor(ctx: DurableObjectState, env: MuseBindings) {
@@ -108,6 +111,163 @@ export class Inbox extends DurableObject<MuseBindings> {
       return { state: 'configured', verification } as const
     }
     return { state: 'awaiting_authorization', nodeId: 'homelink-' + this.ctx.id.toString().slice(0, 6) } as const
+  }
+
+  private browserView(session: BrowserSetupSession): BrowserSetupView {
+    const { stage, error, notice, passwordAvailable, methods, selectedMethod, nodeId, expiresAt } = session
+    return { stage, error, notice, passwordAvailable, methods, selectedMethod, nodeId, expiresAt }
+  }
+
+  private async browserHash(value: string) {
+    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+    return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('')
+  }
+
+  private browserToken() {
+    return Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('')
+  }
+
+  async createBrowserSetupLink(sessionId: string) {
+    if (!museDeviceSchema.shape.sdkToken.safeParse(this.env.MUSE_SDK_TOKEN).success)
+      return { state: 'missing_sdk_token' } as const
+    if (!sideChatId.test(sessionId)) return { state: 'invalid_side_chat' } as const
+    const pairing = this.beginPairing()
+    if (pairing.state !== 'awaiting_authorization') return pairing
+    const token = this.browserToken()
+    const expiresAt = Date.now() + 10 * 60_000
+    this.ctx.storage.kv.put('browser-setup-ticket', {
+      hash: await this.browserHash(token), expiresAt, nodeId: pairing.nodeId,
+      sideChatId: sessionId,
+    })
+    return { state: 'issued', token, expiresAt, nodeId: pairing.nodeId } as const
+  }
+
+  async resetSetup() {
+    const run = this.browserUpdates.then(() => this.updateCredentials(async () => {
+      if (!this.credentialStorageReady) return 'unavailable' as const
+      if (bootstrapDevice(this.env) !== undefined) return 'managed_by_secrets' as const
+      const previousPairing = this.pairing
+      const activeSession = this.ctx.storage.kv.get<string>('browser-setup-active')
+      this.ctx.storage.kv.delete('browser-setup-ticket')
+      this.ctx.storage.kv.delete('browser-setup-active')
+      this.ctx.storage.kv.delete('active-pairing')
+      this.queue.abandonPending()
+      this.device = null
+      this.pairing = null
+      this.leaseLookup = undefined
+      this.unsavedRotation = undefined
+      this.queue = this.deliveryQueue()
+      if (activeSession) await this.credentials.delete(`browser:${activeSession}`)
+      if (previousPairing) {
+        await this.credentials.delete(`device:${previousPairing}`)
+        this.ctx.storage.kv.delete(`rejected:${previousPairing}`)
+        this.ctx.storage.kv.delete(`lease-retry:${previousPairing}`)
+      }
+      if ((await this.ctx.storage.getAlarm()) !== null) await this.ctx.storage.deleteAlarm()
+      return 'reset' as const
+    }))
+    this.browserUpdates = run.then(() => {}, () => {})
+    return run
+  }
+
+  async browserSetupTicket(token: string) {
+    if (!/^[0-9a-f]{64}$/.test(token)) return null
+    const ticket = this.ctx.storage.kv.get<{ hash: string; expiresAt: number; nodeId: string }>('browser-setup-ticket')
+    if (!ticket || ticket.expiresAt < Date.now() || ticket.hash !== await this.browserHash(token)) return null
+    return this.browserView({ stage: 'contact', nodeId: ticket.nodeId, expiresAt: ticket.expiresAt,
+      waterfallId: '' })
+  }
+
+  async beginBrowserSetup(token: string, sessionToken: string, contact: string, region: string) {
+    if (!/^[0-9a-f]{64}$/.test(token) || !/^[0-9a-f]{64}$/.test(sessionToken)) return null
+    const hash = await this.browserHash(token)
+    const ticket = this.ctx.storage.kv.get<{ hash: string; expiresAt: number; nodeId: string; sideChatId?: string }>('browser-setup-ticket')
+    if (!ticket || ticket.hash !== hash || ticket.expiresAt < Date.now()) return null
+    this.ctx.storage.kv.delete('browser-setup-ticket')
+    const session: BrowserSetupSession = {
+      expiresAt: ticket.expiresAt, nodeId: ticket.nodeId, sideChatId: ticket.sideChatId,
+      waterfallId: crypto.randomUUID(), stage: 'contact',
+    }
+    try {
+      await beginWebLogin(session, contact, region)
+    } catch (error) {
+      session.stage = 'error'
+      session.error = browserSetupError(error)
+    }
+    const sessionHash = await this.browserHash(sessionToken)
+    const previous = this.ctx.storage.kv.get<string>('browser-setup-active')
+    if (previous && previous !== sessionHash) await this.credentials.delete(`browser:${previous}`)
+    await this.credentials.put(`browser:${sessionHash}`, session)
+    this.ctx.storage.kv.put('browser-setup-active', sessionHash)
+    return this.browserView(session)
+  }
+
+  private async loadBrowserSession(sessionToken: string) {
+    if (!/^[0-9a-f]{64}$/.test(sessionToken)) return null
+    const key = `browser:${await this.browserHash(sessionToken)}` as const
+    if (this.ctx.storage.kv.get('browser-setup-active') !== key.slice('browser:'.length)) return null
+    const session = await this.credentials.get(key)
+    if (!session) return null
+    if (session.expiresAt < Date.now()) {
+      await this.credentials.delete(key)
+      this.ctx.storage.kv.delete('browser-setup-active')
+      return null
+    }
+    return { key, session }
+  }
+
+  async browserSetupSession(sessionToken: string) {
+    const saved = await this.loadBrowserSession(sessionToken)
+    return saved ? this.browserView(saved.session) : null
+  }
+
+  async advanceBrowserSetup(sessionToken: string, action: string, value: string) {
+    const run = this.browserUpdates.then(async () => {
+      const saved = await this.loadBrowserSession(sessionToken)
+      if (!saved) return null
+      const { key, session } = saved
+      if (session.stage === 'done' || session.stage === 'error') return this.browserView(session)
+      try {
+        if (!museDeviceSchema.shape.sdkToken.safeParse(this.env.MUSE_SDK_TOKEN).success)
+          throw new Error('SDK token unavailable')
+        const outcome = await advanceWebLogin(session, action, value, this.env.MUSE_SDK_TOKEN!)
+        if (outcome.device) {
+          const imported = await this.importPairing(outcome.device)
+          if (imported !== 'ready') throw new Error('Gadget credential import failed')
+          session.stage = 'done'
+          session.csrf = undefined
+          session.keyId = undefined
+          session.publicKey = undefined
+          session.cookies = undefined
+          session.methods = undefined
+          session.selectedMethod = undefined
+          if (session.sideChatId) {
+            try {
+              const chats = await this.registerSideChat('MuseKnock', session.sideChatId)
+              if ('error' in chats) {
+                session.notice = '通知先の自動登録ができませんでした。Muse でサイドチャットを登録してください。'
+              } else {
+                const receipt = await this.enqueue({
+                  key: crypto.randomUUID(), source: 'museknock-setup', type: 'setup_complete',
+                  text: 'MuseKnock setup complete. Webhook notifications are ready.',
+                })
+                session.notice = 'state' in receipt
+                  ? 'サイドチャットへ完了通知を送信しています。'
+                  : '通知先の自動登録は完了しました。完了通知の送信を再試行してください。'
+              }
+            } catch {
+              session.notice = '通知先の自動登録ができませんでした。Muse でサイドチャットを登録してください。'
+            }
+          }
+        }
+      } catch (error) {
+        session.error = browserSetupError(error)
+      }
+      await this.credentials.put(key, session)
+      return this.browserView(session)
+    })
+    this.browserUpdates = run.then(() => {}, () => {})
+    return run
   }
 
   private updateCredentials<T>(update: () => Promise<T>): Promise<T> {

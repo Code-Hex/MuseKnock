@@ -63,8 +63,8 @@ test('local setup prepares independent access tokens and preserves existing valu
   assert.match(parseEnv(await readFile(vars, 'utf8')).CREDENTIAL_ENCRYPTION_KEY!, /^[a-f0-9]{64}$/)
 })
 
-test('the deploy button and all quick starts agree on the two deployment secrets', async () => {
-  const initial = ['MCP_ADMIN_TOKEN', 'CREDENTIAL_ENCRYPTION_KEY'].sort()
+test('the deploy button and all quick starts agree on the three deployment secrets', async () => {
+  const initial = ['MCP_ADMIN_TOKEN', 'CREDENTIAL_ENCRYPTION_KEY', 'MUSE_SDK_TOKEN'].sort()
   const root = new URL('../', import.meta.url)
   const template = parseEnv(await readFile(new URL('.dev.vars.example', root), 'utf8'))
   assert.deepEqual(Object.keys(template).sort(), initial)

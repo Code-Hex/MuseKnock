@@ -28,29 +28,42 @@ flowchart LR
 
 请准备 Cloudflare 和 GitHub 账户、已有 Muse 侧边对话的会话 ID，以及 Muse Gadget SDK 令牌（`MUSE_SDK_TOKEN`）。该令牌仅供个人非商业用途。[申请 SDK 令牌](https://gadgets.muse.ai/settings/sdk-tokens) · [使用条款](https://gadgets.muse.ai/sdk-terms)
 
-**1. 部署到 Cloudflare。** 选择 Worker 名称，分别生成并填写以下两项密钥。将两者保存在密码管理器中，并记下部署后的 HTTPS 地址。
+**1. 部署到 Cloudflare。** 选择 Worker 名称并填写以下三项 Secret。管理令牌和加密密钥分别生成，保存在密码管理器中，并记下部署后的 HTTPS 地址。
 
 | Worker 密钥 | 值 | 使用时间 |
 | --- | --- | --- |
 | `MCP_ADMIN_TOKEN` | 用于 Muse 管理连接器的长随机令牌 | 长期保留 |
 | `CREDENTIAL_ENCRYPTION_KEY` | 用于加密凭据的独立 32 字节密钥。在密码管理器中随机生成 64 个十六进制字符（0–9、a–f），并妥善备份。 | 长期保留 |
+| `MUSE_SDK_TOKEN` | 在 [gadgets.muse.ai](https://gadgets.muse.ai/settings/sdk-tokens) 申请的 Gadget SDK 令牌 | 浏览器授权及后续令牌更新 |
 
 **2. 连接 Muse。** 在 Muse 的 **Settings → Connectors** 中添加一个自定义连接器。在已部署 Worker 的 URL 后加上 `/mcp`，选择 Bearer 身份验证，将 `MCP_ADMIN_TOKEN` 填入令牌栏。[Muse 连接器指南](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
-**3. 请 Muse 开始配对。** 如果返回 `configured`，请继续第 4 步。如果返回 `rejected`，请先[更新配对](docs/operations.zh-CN.md#更新设备授权)。如果返回 `awaiting_authorization`，请在手机上登录 Muse，并在支持蓝牙的 Mac 上打开此仓库。安装 Node.js 22.12 或更高版本和 [uv](https://docs.astral.sh/uv/getting-started/installation/)，然后在访达中双击 **Pair MuseKnock.command**。
+**3. 在接收通知的 Muse 侧边对话中请求 MuseKnock 浏览器设置链接。** Muse 将该对话的会话 ID 作为必填的 `sessionId` 参数传给 `create_browser_setup_link`。若 Muse 无法取得 ID，请提供侧边对话的网址。认证成功后，Worker 会验证并注册该对话，然后发送完成通知。链接有效期十分钟且只能使用一次。打开后输入 Muse 邮箱或电话号码，并完成密码和验证码步骤。Worker 申请 Gadget 凭据并加密保存刷新令牌。若对话自动注册失败，请在第 4 步手动注册。若要重新认证已配对的 Worker，请先按下方步骤重置，再申请新链接。
 
-仅首次授权需要 Mac。手机授权完成后，Mac 会停止蓝牙广播，之后由 Worker 通过互联网上的 Muse Link 投递通知。
+要清除已保存的 Gadget 配对并重新设置，请在本地终端运行以下命令，并在提示时输入 Muse 管理连接器使用的同一个 `MCP_ADMIN_TOKEN`：
 
-在 Mac 上打开的浏览器页面中输入 Worker 地址、管理令牌和 Gadget SDK 令牌，然后点击 **Start pairing**。保持页面和启动窗口打开，直到 Worker 确认保存配对。启动器会在首次运行时安装依赖项。也可在终端运行 `npm ci` 和 `npm run pair`。
+```sh
+printf 'MCP_ADMIN_TOKEN: '
+read -rs MUSEKNOCK_ADMIN_TOKEN
+printf '\n'
+if [ -z "$MUSEKNOCK_ADMIN_TOKEN" ]; then
+  printf '管理令牌为空。\n' >&2
+else
+curl --fail-with-body --silent --show-error \
+  -X POST 'https://YOUR-WORKER.workers.dev/v1/setup/reset' \
+  -H "Authorization: Bearer ${MUSEKNOCK_ADMIN_TOKEN}"
+fi
+unset MUSEKNOCK_ADMIN_TOKEN
+```
 
-1. 在使用 Muse 的 iPhone 上打开支持写入特征值的蓝牙 LE 工具，例如 [nRF Connect](https://github.com/nordicsemi/IOS-nRF-Connect)。连接到与 Mac 上显示的 `MuseGadget…` 名称完全相同的设备。
-2. 打开Mac 上显示的服务和验证特征，选择 **Write with response**，写入 Mac 上显示的 16 位十六进制验证码。Mac 显示 **Phone verified** 后，在蓝牙工具中断开连接。
-3. 在同一部 iPhone 的 Muse 中打开 **Settings → Devices**，启用 **Allow community devices**（部分版本称为 **Developer mode**），然后点击 **＋**。如果需要选择类型，请选 **Muse Gadget**，再选同一设备名称。如果 Muse 询问 Wi-Fi，请选 **Use current connection**。Worker 确认保存配对后，即可关闭 Mac。[授权详情](docs/operations.zh-CN.md#首次授权设备)
+成功时返回无正文的 `204`，不会生成链接。待发送通知会停止，原通知目标也会清除。请 Muse 生成新链接；认证成功后会注册通过 `sessionId` 提供的对话。不要把管理令牌放进 URL 或聊天。
+
+此浏览器流程使用 Muse 的非公开认证 API。如果 Muse 更改接口或要求额外的账户验证，请使用[蓝牙授权步骤](docs/operations.zh-CN.md#首次授权设备)。Worker 通过 HTTPS 将密码和验证码发送给 Muse，但不持久保存。拿到设置链接的人在有效期内可以使用它，请勿分享。
 
 **4. 通过 Muse 注册对话并测试投递。** 可以按顺序向连接器提出以下请求。
 
 1. “检查我的 MuseKnock 配置。” `get_setup_status` 检查 Worker 中的配置。下面的测试消息用于验证实际投递。
-2. “将现有会话 `已有会话ID` 注册为‘构建通知’，并设为通知目标。”请使用已有侧边对话的会话 ID。`register_side_chat` 保存的是 MuseKnock 中的名称。MuseKnock 会先向所选 Muse VM 确认会话存在，再保存或切换目标。[Gadget SDK 侧边对话说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
+2. 若设置页面提示对话自动注册失败，请请求“将现有会话 `已有会话ID` 注册为‘构建通知’，并设为通知目标。”MuseKnock 会先向所选 Muse VM 确认会话存在，再保存或切换目标。[Gadget SDK 侧边对话说明](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “发送一条测试通知并检查回执。”Muse 使用新的 UUID 作为 `requestId` 调用 `send_test_notification`，然后用返回的回执 ID 调用 `get_delivery_status`。当状态为 `sent` 时，打开所选对话查看消息。重试同一次测试时，请使用相同的请求 ID。
 
 **5. 连接事件来源。** 如需接入 Slack、LINE、Twilio、Telegram、企业微信、GitHub 或 X，请参阅[直接连接服务](#直接连接服务)。Bluesky 和 Discord 的设置见[连接 Bluesky](#连接-bluesky)和[连接 Discord](#连接-discord)。支持自定义 Bearer 请求头的服务可以使用下面的通用 Webhook。

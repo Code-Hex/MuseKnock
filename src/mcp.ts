@@ -21,6 +21,7 @@ type DeliveryControls = Pick<
   | 'setActiveSideChat'
   | 'getSetupStatus'
   | 'beginPairing'
+  | 'createBrowserSetupLink'
   | 'sendTestNotification'
 >
 
@@ -128,6 +129,29 @@ export async function handleMcp(
   }
 
   if (role === 'admin') {
+    server.registerTool(
+      'create_browser_setup_link',
+      {
+        description: 'Issue a one-use, ten-minute browser link to authorize this Worker as a Muse Gadget. Pass the session ID of the side chat where the user requested setup. Muse does not send the chat ID in MCP request metadata; include it as sessionId. Successful setup registers that chat and sends a completion notification there. If the ID is unknown, ask the user for the side chat URL. The Worker must have MUSE_SDK_TOKEN configured. A paired Worker must be reset before another link can be issued. Show the link only to the account owner.',
+        inputSchema: { sessionId: z.string().regex(sideChatId).describe('Session ID of the requesting Muse side chat.') },
+        annotations: { readOnlyHint: false, openWorldHint: false },
+      },
+      async ({ sessionId }) => {
+        const issued = await inbox.createBrowserSetupLink(sessionId)
+        if (issued.state !== 'issued') return failure(
+          issued.state === 'missing_sdk_token' ? 'Set MUSE_SDK_TOKEN in the Worker secrets.' :
+          issued.state === 'configured' ? 'This Worker is already paired. Reset the setup before requesting another browser link.' :
+          'Browser setup is unavailable. Check the Worker credential encryption key and pairing settings.',
+        )
+        return result({
+          url: new URL('/v1/setup/browser/' + issued.token, request.url).toString(),
+          expiresAt: new Date(issued.expiresAt).toISOString(),
+          nodeId: issued.nodeId,
+          sessionId,
+        })
+      },
+    )
+
     server.registerTool(
       'begin_muse_pairing',
       {

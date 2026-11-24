@@ -28,29 +28,42 @@ flowchart LR
 
 Cloudflare と GitHub のアカウント、既存の Muse サイドチャットのセッション ID、Muse Gadget SDK トークン（`MUSE_SDK_TOKEN`）を用意します。トークンは個人・非商用利用向けです。[SDK トークンを発行する](https://gadgets.muse.ai/settings/sdk-tokens) · [利用条件](https://gadgets.muse.ai/sdk-terms)
 
-**1. Cloudflare にデプロイします。** Worker 名を選び、次の2つを別々に生成して入力します。両方をパスワードマネージャーに保管し、デプロイ先の HTTPS URL を控えます。
+**1. Cloudflare にデプロイします。** Worker 名を選び、次の3つを Secret として入力します。管理用トークンと暗号鍵は別々に生成し、パスワードマネージャーに保管します。デプロイ先の HTTPS URL を控えます。
 
 | シークレット | 設定する値 | 必要な期間 |
 | --- | --- | --- |
 | `MCP_ADMIN_TOKEN` | Muse の管理用コネクタで使う、十分に長いランダムなトークン | 常時 |
 | `CREDENTIAL_ENCRYPTION_KEY` | 保存する認証情報を暗号化する32バイトの専用鍵。パスワードマネージャーで16進数（0〜9、a〜f）のランダムな64文字を生成し、控えを安全に保管します。 | 常時 |
+| `MUSE_SDK_TOKEN` | [gadgets.muse.ai](https://gadgets.muse.ai/settings/sdk-tokens) で発行した Gadget SDK トークン | ブラウザでの端末認証と、その後のトークン更新 |
 
 **2. Muse にコネクタを追加します。** Muse の **Settings → Connectors** でカスタムコネクタを1つ追加します。デプロイ先の URL の末尾に `/mcp` を付け、認証方式に Bearer を選び、トークン欄に `MCP_ADMIN_TOKEN` を入力します。[Muse コネクタの設定手順](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
-**3. Muse に「MuseKnock のペアリングを開始して」と頼みます。** `configured` なら手順4に進みます。`rejected` なら[ペアリングを更新](docs/operations.ja.md#端末認証を更新する)します。`awaiting_authorization` なら、スマホの Muse にログインし、Bluetooth 対応の Mac でこのリポジトリを開きます。Node.js 22.12 以降と [uv](https://docs.astral.sh/uv/getting-started/installation/) を用意し、Finder で **Pair MuseKnock.command** をダブルクリックします。
+**3. 通知を受け取りたい Muse サイドチャットで「このチャットを通知先にして、MuseKnock のブラウザセットアップリンクを発行して」と頼みます。** Muse はそのチャットのセッション ID を `create_browser_setup_link` の `sessionId` 引数で Worker に送ります。Muse が ID を取得できない場合は、サイドチャットの URL を伝えてください。Worker は認証完了時にチャットを確認して通知先に登録し、完了通知を送ります。リンクは10分間有効な1回限りの URL です。開いたページに Muse のメールアドレスまたは電話番号を入力し、案内されたパスワード、SMS コードなどを入力します。Worker は Gadget のトークンを発行して暗号化保存します。チャットの自動登録に失敗した場合は手順4で登録します。再設定する場合は、下のリセット手順を実行してから新しいリンクを発行します。
 
-Mac を使うのは初回の認可時だけです。スマホからの認可が完了すると Bluetooth の広告は終了し、以降の通知は Worker がインターネット経由の Muse Link で届けます。
+保存済みの Gadget 認証を消して最初から設定し直す場合は、手元のターミナルで次を実行します。Muse の管理コネクタに登録した `MCP_ADMIN_TOKEN` を、表示されない入力欄に入れます。トークンは URL やチャットに貼らず、`Authorization` ヘッダーで送ります。
 
-Mac のブラウザに開いたページで Worker URL、管理用トークン、Gadget SDK トークンを入力し、**Start pairing** を押します。Worker への保存が完了するまでブラウザと起動用のウィンドウを開いておきます。初回はランチャーが依存関係をインストールします。ターミナルでペアリングする場合は `npm ci` と `npm run pair` を実行します。
+```sh
+printf 'MCP_ADMIN_TOKEN: '
+read -rs MUSEKNOCK_ADMIN_TOKEN
+printf '\n'
+if [ -z "$MUSEKNOCK_ADMIN_TOKEN" ]; then
+  printf '管理トークンが空です。\n' >&2
+else
+curl --fail-with-body --silent --show-error \
+  -X POST 'https://YOUR-WORKER.workers.dev/v1/setup/reset' \
+  -H "Authorization: Bearer ${MUSEKNOCK_ADMIN_TOKEN}"
+fi
+unset MUSEKNOCK_ADMIN_TOKEN
+```
 
-1. Muse で使う iPhone に、特性への書き込みができる Bluetooth LE ツールを用意します。[nRF Connect](https://github.com/nordicsemi/IOS-nRF-Connect) などで、Mac に表示された `MuseGadget…` と同じ名前のデバイスに接続します。
-2. Mac に表示されたサービスと確認用の特性を開きます。**Write with response** を選び、Mac に表示された16桁の16進確認コードを書き込みます。Mac に **Phone verified** と表示されたら、Bluetooth ツールを切断します。
-3. 同じ iPhone の Muse で **設定 → デバイス → コミュニティデバイスを許可**（一部のバージョンでは **Developer mode**）を有効にし、**＋** を開きます。種類を聞かれたら **Muse Gadget** を選び、同じデバイス名に接続します。Wi-Fi の選択画面では **Use current connection** を選びます。Worker への保存が完了したら Mac の電源を切れます。[認証の詳細](docs/operations.ja.md#初回の端末認証)
+成功時は本文なしの `204` が返ります。リンクは発行されません。未配信通知は停止し、以前の投稿先も消えます。続けて Muse に新しいセットアップリンクを依頼すると、渡した `sessionId` のチャットが認証完了時に登録されます。
+
+このブラウザ方式は Muse の非公開認証 API を利用します。Muse の変更や追加の本人確認によって完了できない場合は、[Bluetooth を使う認証手順](docs/operations.ja.md#初回の端末認証)を使ってください。入力したパスワードと確認コードは Worker から Muse に HTTPS で送られ、Worker の保存領域には残しません。セットアップ URL は開いた人が利用できるため、他人に共有しないでください。
 
 **4. Muse に投稿先の登録とテストを頼みます。** 次の順に依頼してください。
 
 1. 「MuseKnock の設定を確認して」。`get_setup_status` は Worker 内の設定を確認します。実際に届くかはテスト投稿で確かめます。
-2. 「既存のセッション `既存のセッションID` を『ビルド通知』として登録し、通知先にして」。既存のサイドチャットのセッション ID を使います。`register_side_chat` が登録する名前は MuseKnock 内のものです。MuseKnock は登録・切替の前に、選択した Muse VM にそのセッションが存在することを確認します。[Gadget SDK のサイドチャット](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
+2. セットアップ画面で通知先の自動登録に失敗した場合は、「既存のセッション `既存のセッションID` を『ビルド通知』として登録し、通知先にして」。MuseKnock は登録・切替の前に、選択した Muse VM にそのセッションが存在することを確認します。[Gadget SDK のサイドチャット](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. 「テスト通知を1件送り、配信状態を確認して」。Muse は新しい UUID を `requestId` として `send_test_notification` を呼び、返った受付 ID を `get_delivery_status` に渡します。`sent` になったら選んだチャットを開きます。同じテストを再試行するときは同じリクエスト ID を使います。
 
 **5. 送信元サービスを接続します。** Slack、LINE、Twilio、Telegram、企業微信、GitHub、X には[サービス別の設定手順](#サービスを直接接続する)を使います。Bluesky と Discord の設定は [Bluesky を接続する](#bluesky-を接続する)と [Discord を接続する](#discord-を接続する)を参照してください。Bearer ヘッダーを指定できる送信元には、次の汎用 Webhook が使えます。

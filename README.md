@@ -28,29 +28,42 @@ flowchart LR
 
 Prepare your Cloudflare and GitHub accounts, an existing Muse side chat and its session ID, and your Muse Gadget SDK token (`MUSE_SDK_TOKEN`). The token is for personal, non-commercial use. [Issue an SDK token](https://gadgets.muse.ai/settings/sdk-tokens) · [SDK token terms](https://gadgets.muse.ai/sdk-terms)
 
-**1. Deploy to Cloudflare.** Choose a Worker name and supply these two secrets. Keep both in your password manager, then copy the deployed Worker’s HTTPS URL.
+**1. Deploy to Cloudflare.** Choose a Worker name and supply these three secrets. Generate the admin token and encryption key separately, keep them in your password manager, then copy the deployed Worker’s HTTPS URL.
 
 | Worker secret | Value | When needed |
 | --- | --- | --- |
 | `MCP_ADMIN_TOKEN` | A long random token for the admin connector in Muse | Keep |
 | `CREDENTIAL_ENCRYPTION_KEY` | A separate 32-byte key for encrypting stored credentials. In your password manager, generate 64 random hexadecimal characters (0–9, a–f) and keep a private backup. | Keep |
+| `MUSE_SDK_TOKEN` | Your Gadget SDK token from [gadgets.muse.ai](https://gadgets.muse.ai/settings/sdk-tokens) | Browser authorization and later token refresh |
 
 **2. Connect Muse.** In Muse **Settings → Connectors**, add one custom connector. Append `/mcp` to the deployed Worker URL, choose Bearer authentication, and enter `MCP_ADMIN_TOKEN` in the token field. [Muse connector guide](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 
-**3. Start pairing from Muse.** Ask “Start MuseKnock pairing.” If the Worker reports `configured`, continue to step 4. For `rejected`, [renew the pairing](docs/operations.md#renew-device-authorization). For `awaiting_authorization`, open this repository on a Bluetooth-enabled Mac with Node.js 22.12 or later and [uv](https://docs.astral.sh/uv/getting-started/installation/). Sign in to Muse on your phone, then double-click **Pair MuseKnock.command** in Finder.
+**3. Ask Muse for a MuseKnock browser setup link in the side chat where you want notifications.** Muse passes that chat's session ID as the required `sessionId` argument to `create_browser_setup_link`. If Muse cannot obtain the ID, provide the side chat URL. On successful authorization, the Worker verifies and registers the chat, then sends a completion notification. The one-use URL is valid for ten minutes. Open it, enter your Muse email address or phone number, and complete the password and code prompts. The Worker mints Gadget credentials and stores the refresh token encrypted. If automatic chat registration fails, register the destination in step 4. To reauthorize a paired Worker, reset it using the procedure below, then request a new link.
 
-The Mac is needed only for initial pairing. After the phone authorizes the Worker, Bluetooth discovery ends. Subsequent notifications use Muse Link over the internet.
+To clear the stored Gadget pairing and start setup again, run this locally. Enter the same `MCP_ADMIN_TOKEN` used by the Muse admin connector when prompted:
 
-Enter the Worker URL, admin token and Gadget SDK token in the browser page that opens on your Mac. Click **Start pairing**. Keep the browser page and launcher window open until the Worker confirms it saved the pairing. The launcher installs the repository’s dependencies on first run. To pair from a terminal, run `npm ci` and `npm run pair`.
+```sh
+printf 'MCP_ADMIN_TOKEN: '
+read -rs MUSEKNOCK_ADMIN_TOKEN
+printf '\n'
+if [ -z "$MUSEKNOCK_ADMIN_TOKEN" ]; then
+  printf 'Admin token is empty.\n' >&2
+else
+curl --fail-with-body --silent --show-error \
+  -X POST 'https://YOUR-WORKER.workers.dev/v1/setup/reset' \
+  -H "Authorization: Bearer ${MUSEKNOCK_ADMIN_TOKEN}"
+fi
+unset MUSEKNOCK_ADMIN_TOKEN
+```
 
-1. On the iPhone you use for Muse, open a Bluetooth LE tool that can write characteristics, such as [nRF Connect](https://github.com/nordicsemi/IOS-nRF-Connect). Connect to the exact `MuseGadget…` name shown on the Mac.
-2. Open the service and verification characteristic shown on the Mac. Choose **Write with response** and enter the Mac’s 16-digit hexadecimal verification code. When the Mac displays **Phone verified**, disconnect the Bluetooth tool.
-3. On the same iPhone, open Muse **Settings → Devices**, enable **Allow community devices** (**Developer mode** on some versions), and tap **+**. Select **Muse Gadget** if prompted, then select the same gadget name. If Muse asks about Wi-Fi, choose **Use current connection**. Once the Worker confirms it saved the pairing, you can turn off the Mac. [Authorization details](docs/operations.md#authorize-a-device)
+A successful reset returns an empty `204` response and issues no link. Pending notifications stop and the previous destination is cleared. Ask Muse for a new setup link; the chat passed as `sessionId` is registered after authorization. Keep the admin token out of URLs and chats.
+
+This browser flow uses Muse's private authentication API. If Muse changes it or requires additional account checks, use the [Bluetooth authorization procedure](docs/operations.md#authorize-a-device). The Worker sends your password and verification code to Muse over HTTPS and does not persist them. Anyone with the setup link can use it until it expires, so keep it private.
 
 **4. Register and test the chat from Muse.** You can ask the connector to do each step in plain language.
 
 1. “Check my MuseKnock configuration.” `get_setup_status` checks local settings. The test post below checks delivery.
-2. “Register the existing session `YOUR-EXISTING-SESSION-ID` as `builds` and select it for notifications.” Use the ID of the existing side chat. `register_side_chat` saves the destination. MuseKnock can list its registered names. MuseKnock checks that the session exists on the selected Muse VM before saving or switching the destination. [Gadget SDK side chats](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
+2. If the setup page reports that automatic registration failed, ask Muse to “Register the existing session `YOUR-EXISTING-SESSION-ID` as `builds` and select it for notifications.” MuseKnock checks that the session exists on the selected Muse VM before saving or switching the destination. [Gadget SDK side chats](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/README.md)
 3. “Send one test notification and check its receipt.” Muse calls `send_test_notification` with a fresh UUID as `requestId`, then `get_delivery_status` with the returned receipt ID. Look in the selected chat when the status is `sent`. Reuse the same request ID when retrying the same test.
 
 **5. Connect your event source.** For Slack, LINE, Twilio, Telegram, WeCom, GitHub, or X, follow [Connect a service directly](#connect-a-service-directly). For Bluesky or Discord, see [Connect Bluesky](#connect-bluesky) or [Connect Discord](#connect-discord). For a sender that supports a custom Bearer header, use the generic webhook below.

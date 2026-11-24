@@ -19,6 +19,7 @@ export type MuseDeviceBindings = {
 
 export function bootstrapDevice(env: MuseDeviceBindings) {
   if (!env.MUSE_NODE_ID && !env.MUSE_SDK_TOKEN && !env.MUSE_REFRESH_TOKEN) return undefined
+  if (!env.MUSE_NODE_ID && env.MUSE_SDK_TOKEN && !env.MUSE_REFRESH_TOKEN) return undefined
   const device = museDeviceSchema.safeParse({
     nodeId: env.MUSE_NODE_ID,
     sdkToken: env.MUSE_SDK_TOKEN,
