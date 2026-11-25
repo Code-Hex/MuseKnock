@@ -1,12 +1,13 @@
 import { AssertionError } from 'node:assert'
 import { setTimeout as delay } from 'node:timers/promises'
-import { build } from 'esbuild'
+import { build, type Plugin } from 'esbuild'
 import { Miniflare, Response, convertV4MiniflareOptions, type V4ServiceDesignator } from 'miniflare'
 
 export async function startWorker(
   outbound: V4ServiceDesignator = () => new Response(null, { status: 503 }),
   overrides: Record<string, string | undefined> = {},
   resourcePersistencePath?: string,
+  plugins: Plugin[] = [],
 ) {
   const bundle = await build({
     stdin: {
@@ -36,6 +37,7 @@ export async function startWorker(
       `,
     },
     bundle: true,
+    plugins,
     format: 'esm',
     platform: 'browser',
     conditions: ['workerd', 'worker'],
