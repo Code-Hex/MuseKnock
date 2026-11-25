@@ -586,15 +586,24 @@ export class Inbox extends DurableObject<MuseBindings> {
       return { error: 'Check the Muse device credentials and encrypted storage before selecting a chat.' }
     try {
       const leases = await this.resolveLeases(device)
-      const vm = vmId === null ? leases[0] : leases.find(lease => lease.vmId === vmId)
-      if (!vm) return { error: 'The registered Muse VM is no longer leased to this device.' }
-      if (await sideChatExists(vm, sessionId)) return { vmId: vm.vmId }
-      return { error: 'Side chat not found on the selected Muse VM. Check the session ID.' }
+      const candidates = vmId === null ? leases : leases.filter(lease => lease.vmId === vmId)
+      if (!candidates.length) return { error: 'The registered Muse VM is no longer leased to this device.' }
+      let incomplete = false
+      for (const vm of candidates) {
+        try {
+          if (await sideChatExists(vm, sessionId)) return { vmId: vm.vmId }
+        } catch {
+          incomplete = true
+        }
+      }
+      if (!incomplete) return { error: vmId === null
+        ? 'Side chat not found on any leased Muse VM. Check the session ID.'
+        : 'Side chat not found on the selected Muse VM. Check the session ID.' }
     } catch {
       if (this.ctx.storage.kv.get(`rejected:${this.pairing}`))
         return { error: 'Muse rejected the saved device credentials. Start pairing again to check recovery options.' }
-      return { error: 'Could not verify the side chat with Muse. Check the device and VM lease, then retry.' }
     }
+    return { error: 'Could not verify the side chat with Muse. Check the device and VM lease, then retry.' }
   }
 
   async registerSideChat(name: string, sessionId: string) {

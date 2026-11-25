@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { Response } from 'miniflare'
 import { connect } from './mcp-client.ts'
+import { openSettings } from './settings-client.ts'
 import { startConfiguredWorker, startWorker } from './worker.ts'
 
 test('a temporary settings link moves source changes out of MCP', async t => {
@@ -89,6 +91,83 @@ test('a temporary settings link moves source changes out of MCP', async t => {
       { source: 'github', paused: false, types: ['push', 'release'] },
     ],
   })
+})
+
+test('registration checks later VM leases, but selection stays on the registered VM', async t => {
+  const lookups: { vm: string | null; session: string | null }[] = []
+  const sessionId = 'target-chat'
+  let vmWithChat: string | null = 'later-vm'
+  let unavailableVm: string | null = 'preferred-vm'
+  const worker = await startWorker(request => {
+    const url = new URL(request.url)
+    if (url.pathname === '/device_token/refresh') {
+      return Response.json({ access_token: 'test-access', refresh_token: 'test-refresh' })
+    }
+    if (url.pathname === '/fetch_vms') {
+      return Response.json({ vm_list: [
+        { vm_id: 'later-vm', vm_auth_token: 'later-token', vm_url: 'https://vm.test' },
+        { vm_id: 'preferred-vm', vm_auth_token: 'preferred-token', vm_url: 'https://vm.test', default: true },
+      ] })
+    }
+    assert.equal(url.origin + url.pathname, 'https://vm.test/side-chat')
+    const vm = url.searchParams.get('vm')
+    const session = url.searchParams.get('session')
+    lookups.push({ vm, session })
+    if (vm === unavailableVm) return new Response('private upstream error', { status: 503 })
+    return new Response(null, { status: vm === vmWithChat && session === sessionId ? 200 : 404 })
+  }, {}, undefined, [{
+    name: 'mock-side-chat-lookup',
+    setup(build) {
+      build.onResolve({ filter: /^\.\/link\/chat\.ts$/, namespace: 'file' }, args => ({
+        path: args.resolveDir, namespace: 'mock-side-chat-lookup',
+      }))
+      build.onLoad({ filter: /.*/, namespace: 'mock-side-chat-lookup' }, args => ({
+        resolveDir: args.path,
+        contents: `
+          export { sendSideChat } from './link/chat.ts'
+          export async function sideChatExists(vm, session) {
+            const url = new URL('https://vm.test/side-chat')
+            url.search = new URLSearchParams({ vm: vm.vmId, session })
+            const response = await fetch(url)
+            if (response.status === 404) return false
+            if (!response.ok) throw new Error(await response.text())
+            return true
+          }
+        `,
+      }))
+    },
+  }])
+  t.after(() => worker.close())
+  const admin = await connect(new URL('/mcp', worker.url), 'MCP_ADMIN_TOKEN-test')
+  t.after(() => admin.close())
+  const settings = await openSettings(worker.url, admin)
+
+  const registered = await settings.register('Builds', sessionId)
+  assert.deepEqual(lookups.splice(0), [
+    { vm: 'preferred-vm', session: sessionId }, { vm: 'later-vm', session: sessionId },
+  ])
+  assert.equal(registered.status, 303)
+  const chats = { active: 'Builds', chats: [{ name: 'Builds', sessionId }] }
+  assert.deepEqual((await admin.callTool({ name: 'list_side_chats' })).structuredContent, chats)
+
+  vmWithChat = 'preferred-vm'
+  unavailableVm = null
+  assert.equal((await settings.select('Builds')).status, 422)
+  assert.deepEqual(lookups.splice(0), [{ vm: 'later-vm', session: sessionId }])
+  assert.deepEqual((await admin.callTool({ name: 'list_side_chats' })).structuredContent, chats)
+
+  vmWithChat = null
+  const missing = await settings.register('Missing', sessionId)
+  assert.equal(missing.status, 422)
+  assert.match(await missing.text(), /Side chat not found on any leased Muse VM/)
+
+  unavailableVm = 'preferred-vm'
+  const unavailable = await settings.register('Missing', sessionId)
+  assert.equal(unavailable.status, 422)
+  const html = await unavailable.text()
+  assert.match(html, /Could not verify the side chat with Muse/)
+  assert.doesNotMatch(html, /private upstream error/)
+  assert.deepEqual((await admin.callTool({ name: 'list_side_chats' })).structuredContent, chats)
 })
 
 test('a new link replaces an unused ticket and reset ends an open settings session', async t => {

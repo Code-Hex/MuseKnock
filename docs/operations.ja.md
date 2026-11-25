@@ -44,7 +44,7 @@ Worker は Muse の端末トークンと Bluesky のセッションを AES-256-G
 
 失効したペアリングは、同じ Worker URL をペアリング画面に入力し、**Replace existing pairing** を選んで認可してから、サイドチャットを登録し直します。通知元とコネクタには同じ URL を使えます。配信待ちの通知は元のペアリングに紐づきます。Cloudflare に Muse の3つのシークレットを設定していて SDK トークンだけが誤っている場合は、その値を訂正して再デプロイします。3つのシークレットを使う構成から新しいペアリングに切り替える場合は、Worker が保存済みの認証情報を読み込めることを確認し、3つをまとめて削除して再デプロイしてから再認証します。 ターミナルから行う場合は `npm run pair -- --replace` を使います。
 
-Worker は標準の端末 API `api.muse.ai` と暗号化された Link ゲートウェイ `hatch.metaaivm.com` を使用します。`MUSE_VM_ID` を指定した場合は、その VM が端末に貸与されていることを確認してください。指定がなければ、登録時に既定の VM を選び、既定がなければ一覧の先頭を使います。登録済みの名前を選び直すと、登録時の VM でチャットを確認します。現在の既定 VM に移すには、設定画面で同じ名前とセッション ID を再登録してください。[Gadget SDK の端末 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
+Worker は標準の端末 API `api.muse.ai` と暗号化された Link ゲートウェイ `hatch.metaaivm.com` を使用します。`MUSE_VM_ID` を指定した場合、登録時はその VM だけを検索します。その VM が端末に貸与されていることを確認してください。指定しない場合、既定の VM があれば最初に確認し、その後はチャットが見つかるまで他の貸与済み VM を検索します。登録済みの名前を選ぶと、Worker はその名前に紐づけて保存した VM でチャットを確認します。チャットを検索し直すには、設定画面で同じ名前とセッション ID を再登録してください。`MUSE_VM_ID` を変更すると、別の登録先一覧に切り替わります。既存の登録先は移行されません。[Gadget SDK の端末 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 
 ## Webhook の送信仕様
 
