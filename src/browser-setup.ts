@@ -88,7 +88,18 @@ async function postWeb(session: BrowserSetupSession, path: string, body: Json, r
     const cookie = /^([^=;]+)=([^;]*)/.exec(header)
     if (cookie) (session.cookies ??= {})[cookie[1]] = cookie[2]
   }
-  return jsonResponse(response)
+  try {
+    const data = await jsonResponse(response)
+    const csrf = string(data.csrf_token)
+    if (csrf) session.csrf = csrf
+    return data
+  } catch (error) {
+    if (error instanceof AuthError) {
+      const csrf = string(error.problem.csrf_token)
+      if (csrf) session.csrf = csrf
+    }
+    throw error
+  }
 }
 
 function publicKeyBytes(value: string): Uint8Array {
@@ -170,8 +181,10 @@ async function acceptCredentials(session: BrowserSetupSession, data: Json, sdkTo
 export async function beginWebLogin(session: BrowserSetupSession, contact: string, region: string,
   request: Request = fetch): Promise<BrowserSetupSession> {
   const restarted = await postWeb(session, '/api/auth/native/restart', {}, request)
-  session.csrf = string(restarted.csrf_token)
-  if (!session.csrf) throw new Error('Muse did not provide CSRF token')
+  if (!string(restarted.csrf_token)) {
+    session.csrf = undefined
+    throw new Error('Muse did not provide CSRF token')
+  }
   let started = restarted
   if (restarted.flow_state === 'new') started = await postWeb(session, '/api/auth/native/start', {}, request)
   if (started.flow_state !== 'started') throw new Error('Unsupported Muse login flow')
@@ -182,7 +195,6 @@ export async function beginWebLogin(session: BrowserSetupSession, contact: strin
   const fields: Json = { contact_point: contact }
   if (region) fields.region = region.toUpperCase()
   const sent = await postWeb(session, '/api/auth/native/send-otp', fields, request)
-  session.csrf = string(sent.csrf_token) ?? session.csrf
   if (sent.registration_state === 'password_required' ||
       (sent.registration_state === 'otp_sent' && sent.password_login_available !== false)) {
     session.passwordAvailable = true

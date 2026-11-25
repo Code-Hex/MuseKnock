@@ -31,9 +31,13 @@ test('browser password envelope decrypts with the advertised public key', async 
 
 test('a one-use browser link completes password, SMS and gadget mint without exposing tokens', async t => {
   const calls: string[] = []
+  const csrfHeaders: (string | null)[] = []
   const worker = await startWorker(async request => {
     const path = new URL(request.url).pathname
     calls.push(path)
+    if (path.startsWith('/api/auth/native/') && path !== '/api/auth/native/restart') {
+      csrfHeaders.push(request.headers.get('x-hatch-csrf-token'))
+    }
     const body = request.method === 'POST' ? await request.json() as Record<string, unknown> : {}
     if (path === '/api/auth/native/restart') return WorkerResponse.json({
       csrf_token: 'csrf', flow_state: 'started',
@@ -41,20 +45,22 @@ test('a one-use browser link completes password, SMS and gadget mint without exp
     }, { status: 201 })
     if (path === '/api/auth/native/send-otp') {
       assert.equal(body.region, 'JP')
-      assert.equal(request.headers.get('x-hatch-csrf-token'), 'csrf')
-      return WorkerResponse.json({ registration_state: 'password_required', password_login_available: true }, { status: 201 })
+      return WorkerResponse.json({ csrf_token: 'csrf-otp', registration_state: 'password_required', password_login_available: true }, { status: 201 })
     }
     if (path === '/api/auth/native/confirm-password') {
       assert.match(String(body.password), /^#PWD_BROWSER:5:\d+:/)
       assert.doesNotMatch(String(body.password), /private-password/)
-      return WorkerResponse.json({ registration_state: 'two_factor_required', two_factor_required: true,
+      return WorkerResponse.json({ csrf_token: 'csrf-password', registration_state: 'two_factor_required', two_factor_required: true,
         two_factor_methods: [{ method_id: 'sms', method_type: 'SMS' }] })
     }
     if (path === '/api/auth/native/two-factor-send-code') {
       assert.deepEqual(body, { method_id: 'sms' })
-      return WorkerResponse.json({})
+      return WorkerResponse.json(calls.filter(call => call === path).length === 1 ? { csrf_token: 'csrf-sms' } : {})
     }
     if (path === '/api/auth/native/two-factor') {
+      if (body.code === '000000') {
+        return WorkerResponse.json({ csrf_token: 'csrf-retry', type: 'invalid_code' }, { status: 400 })
+      }
       assert.equal(body.code, '123456')
       return WorkerResponse.json({ auth_meta_session: { frl_access_token: 'frl' } })
     }
@@ -115,8 +121,12 @@ test('a one-use browser link completes password, SMS and gadget mint without exp
   const resend = await submit(form, new URLSearchParams({ action: 'send_code' }), cookie)
   assert.equal(resend.status, 303)
   assert.equal(calls.filter(path => path === '/api/auth/native/two-factor-send-code').length, 2)
+  const rejectedCode = await submit(form, new URLSearchParams({ action: 'two_factor', code: '000000' }), cookie)
+  assert.equal(rejectedCode.status, 303)
+  assert.match(await (await fetch(form, { headers: { Cookie: cookie } })).text(), /HTTP 400, invalid_code/)
   const code = await submit(form, new URLSearchParams({ action: 'two_factor', code: '123456' }), cookie)
   assert.equal(code.status, 303)
+  assert.deepEqual(csrfHeaders, ['csrf', 'csrf-otp', 'csrf-password', 'csrf-sms', 'csrf-sms', 'csrf-retry'])
   const done = await fetch(form, { headers: { Cookie: cookie } })
   assert.equal(done.status, 200)
   const html = await done.text()
