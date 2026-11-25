@@ -44,7 +44,7 @@ Worker 使用 AES-256-GCM 加密保存的 Muse 设备令牌和 Bluesky 会话。
 
 配对失效时，在配对页面输入同一 Worker 地址并选中 **Replace existing pairing**，然后重新注册侧边对话。事件来源和连接器继续使用原地址，待投递的通知仍属于原配对。如果在 Cloudflare 设置了三个 Muse 密钥，而只有 SDK 令牌有误，请直接更正并重新部署。如需将此配置切换为新配对，请先确认 Worker 能读取已保存的凭据，再同时移除三个 Muse 密钥，重新部署并运行替换命令。 也可在终端运行 `npm run pair -- --replace`。
 
-Worker 使用标准设备 API `api.muse.ai` 和加密的 Link 网关 `hatch.metaaivm.com`。如果设置了 `MUSE_VM_ID`，请确认该 VM 已分配给设备。未指定时，注册对话会使用默认 VM，没有默认项则使用列表中的第一项。重新选择已验证的名称时，Worker 会在注册时保存的 VM 上查找对话。要将该名称迁移到当前默认 VM，请在设置页面重新注册相同的名称和会话 ID。[Gadget SDK 设备 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
+Worker 使用标准设备 API `api.muse.ai` 和加密的 Link 网关 `hatch.metaaivm.com`。如果设置了 `MUSE_VM_ID`，注册时只在指定的 VM 上查找对话。请确认该 VM 已分配给设备。如果未设置，注册时会先检查默认 VM（如果有），再依次检查其他已分配给设备的 VM，直到找到对话。选择已注册的名称时，Worker 会在为该名称保存的 VM 上查找对话。如需重新查找对话，请在设置页面使用相同的名称和会话 ID 重新注册。更改 `MUSE_VM_ID` 会切换到另一组对话注册记录，不会迁移现有记录。[Gadget SDK 设备 API](https://github.com/facebookincubator/muse-gadget-sdk/blob/e17081a45941415d483642dbe21c2a2e6ef85a13/linux/src/musegadget/muse_api.py)
 
 ## 发送 Webhook
 

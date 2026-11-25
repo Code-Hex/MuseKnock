@@ -40,7 +40,10 @@ test('a one-use browser link completes password, SMS and gadget mint without exp
     }
     const body = request.method === 'POST' ? await request.json() as Record<string, unknown> : {}
     if (path === '/api/auth/native/restart') return WorkerResponse.json({
-      csrf_token: 'csrf', flow_state: 'started',
+      csrf_token: 'csrf', flow_state: 'new',
+    }, { status: 201 })
+    if (path === '/api/auth/native/start') return WorkerResponse.json({
+      csrf_token: 'csrf-start', flow_state: 'started',
       password_encryption: { key_id: 1, public_key: 'A'.repeat(64) },
     }, { status: 201 })
     if (path === '/api/auth/native/send-otp') {
@@ -126,7 +129,7 @@ test('a one-use browser link completes password, SMS and gadget mint without exp
   assert.match(await (await fetch(form, { headers: { Cookie: cookie } })).text(), /HTTP 400, invalid_code/)
   const code = await submit(form, new URLSearchParams({ action: 'two_factor', code: '123456' }), cookie)
   assert.equal(code.status, 303)
-  assert.deepEqual(csrfHeaders, ['csrf', 'csrf-otp', 'csrf-password', 'csrf-sms', 'csrf-sms', 'csrf-retry'])
+  assert.deepEqual(csrfHeaders, ['csrf', 'csrf-start', 'csrf-otp', 'csrf-password', 'csrf-sms', 'csrf-sms', 'csrf-retry'])
   const done = await fetch(form, { headers: { Cookie: cookie } })
   assert.equal(done.status, 200)
   const html = await done.text()

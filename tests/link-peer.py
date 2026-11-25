@@ -14,9 +14,11 @@ from musegadget.noise.envelope import ApplicationResponse, BodyChunk, Reset, Res
 
 async def verify(socket, events, lookups):
     worker = socket.request.path.startswith("/v1/noise")
+    other_vm = socket.request.path == "/v1/noise?vm_id=other-vm"
     if worker:
-        assert socket.request.path == "/v1/noise?vm_id=local-vm"
-        assert socket.request.headers["Authorization"] == "Bearer local-vm-token"
+        assert other_vm or socket.request.path == "/v1/noise?vm_id=local-vm"
+        token = "other-token" if other_vm else "local-vm-token"
+        assert socket.request.headers["Authorization"] == "Bearer " + token
     vm = FakeVm(socket)
     await vm.handshake()
     control = await vm.next_frame()
@@ -29,10 +31,15 @@ async def verify(socket, events, lookups):
         statuses = {"same-chat": 200, "missing-chat": 404, "other-chat": 200, "busy-chat": 503,
                     "deleted-after-registration": 200}
         session = payload["session_id"]
-        lookups[session] = lookups.get(session, 0) + 1
-        status = 404 if session == "other-chat" and lookups[session] == 3 else statuses[session]
+        if other_vm:
+            assert session in {"busy-chat", "missing-chat"}
+            status = 404
+        else:
+            lookups[session] = lookups.get(session, 0) + 1
+            status = 404 if session == "other-chat" and lookups[session] == 3 else statuses[session]
         await vm.send_frame(ServiceFrame.response(control.stream_id, ApplicationResponse(status=status)))
         return
+    assert not other_vm
     vm.stream_id = control.stream_id
     await vm.send_frame(ServiceFrame.response(control.stream_id, ApplicationResponse(status=200)))
     assert control.value.path == "/link-control"
@@ -140,7 +147,7 @@ async def main():
 
     async with serve(handle, "127.0.0.1", 0, compression=None) as server:
         print(server.sockets[0].getsockname()[1], flush=True)
-        for _ in range(29):
+        for _ in range(31):
             error = await finished.get()
             if error:
                 raise error

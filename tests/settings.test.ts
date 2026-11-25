@@ -96,7 +96,8 @@ test('a temporary settings link moves source changes out of MCP', async t => {
 test('registration checks later VM leases, but selection stays on the registered VM', async t => {
   const lookups: { vm: string | null; session: string | null }[] = []
   const sessionId = 'target-chat'
-  let vmWithChat = 'later-vm'
+  let vmWithChat: string | null = 'later-vm'
+  let unavailableVm: string | null = 'preferred-vm'
   const worker = await startWorker(request => {
     const url = new URL(request.url)
     if (url.pathname === '/device_token/refresh') {
@@ -112,6 +113,7 @@ test('registration checks later VM leases, but selection stays on the registered
     const vm = url.searchParams.get('vm')
     const session = url.searchParams.get('session')
     lookups.push({ vm, session })
+    if (vm === unavailableVm) return new Response('private upstream error', { status: 503 })
     return new Response(null, { status: vm === vmWithChat && session === sessionId ? 200 : 404 })
   }, {}, undefined, [{
     name: 'mock-side-chat-lookup',
@@ -126,7 +128,10 @@ test('registration checks later VM leases, but selection stays on the registered
           export async function sideChatExists(vm, session) {
             const url = new URL('https://vm.test/side-chat')
             url.search = new URLSearchParams({ vm: vm.vmId, session })
-            return (await fetch(url)).ok
+            const response = await fetch(url)
+            if (response.status === 404) return false
+            if (!response.ok) throw new Error(await response.text())
+            return true
           }
         `,
       }))
@@ -146,8 +151,22 @@ test('registration checks later VM leases, but selection stays on the registered
   assert.deepEqual((await admin.callTool({ name: 'list_side_chats' })).structuredContent, chats)
 
   vmWithChat = 'preferred-vm'
+  unavailableVm = null
   assert.equal((await settings.select('Builds')).status, 422)
-  assert.deepEqual(lookups, [{ vm: 'later-vm', session: sessionId }])
+  assert.deepEqual(lookups.splice(0), [{ vm: 'later-vm', session: sessionId }])
+  assert.deepEqual((await admin.callTool({ name: 'list_side_chats' })).structuredContent, chats)
+
+  vmWithChat = null
+  const missing = await settings.register('Missing', sessionId)
+  assert.equal(missing.status, 422)
+  assert.match(await missing.text(), /Side chat not found on any leased Muse VM/)
+
+  unavailableVm = 'preferred-vm'
+  const unavailable = await settings.register('Missing', sessionId)
+  assert.equal(unavailable.status, 422)
+  const html = await unavailable.text()
+  assert.match(html, /Could not verify the side chat with Muse/)
+  assert.doesNotMatch(html, /private upstream error/)
   assert.deepEqual((await admin.callTool({ name: 'list_side_chats' })).structuredContent, chats)
 })
 
